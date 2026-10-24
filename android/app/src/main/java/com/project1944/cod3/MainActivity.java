@@ -388,11 +388,14 @@ public final class MainActivity extends Activity {
         if (allFilesButton == null) {
             return;
         }
-        boolean required = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R;
-        boolean granted = !required || Environment.isExternalStorageManager();
+        boolean modern = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R;
+        boolean granted = modern
+                ? Environment.isExternalStorageManager()
+                : checkSelfPermission(android.Manifest.permission.READ_EXTERNAL_STORAGE)
+                == PackageManager.PERMISSION_GRANTED;
         allFilesButton.setVisibility(granted ? View.GONE : View.VISIBLE);
         allFilesState.setText(granted
-                ? (required ? "All-files access granted." : "Legacy storage permission path.")
+                ? (modern ? "All-files access granted." : "Storage read permission granted.")
                 : "All-files access is required to read /sdcard/cod3 in place.");
         allFilesState.setTextColor(granted ? GREEN : MUTED);
     }
