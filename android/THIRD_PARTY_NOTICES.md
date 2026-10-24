@@ -12,5 +12,10 @@ SDL3 is licensed under the zlib license. The full notice is kept at
 ## ReXGlue / Xenia
 
 The Android runtime work derives from the ReXGlue SDK and Xenia, both under the
-BSD 3-Clause license. Their notices will be added here when the runtime is
-linked in M0b/M1.
+BSD 3-Clause license. The runtime is linked into `librexruntime.so`; the UI layer
+is compiled into `libmain.so`. Xenia's original notice is kept at
+`licenses/xenia/LICENSE`, and upstream bundle notices are in
+`integration/release-packaging/THIRD-PARTY-NOTICES.md`.
+
+The Android changes to the pinned SDK are published as
+`android/patches/rexglue-android.patch` under the same BSD 3-Clause terms.
