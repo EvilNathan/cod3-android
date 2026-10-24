@@ -5,8 +5,9 @@ roadmap and credits are in the [root README](../README.md).
 
 ## Status
 
-**M0b — ReXGlue runtime + Vulkan presenter.** The APK does not contain game code
-and does not run Call of Duty 3 yet. It proves the Android presentation path:
+**M1a — launcher, logging, game-data picker and touch overlay.** The APK does
+not contain game code and does not run Call of Duty 3 yet. It proves the Android
+presentation path and the setup UI:
 
 ```
 MainActivity -> GameActivity (SDLActivity) -> libmain.so
@@ -15,7 +16,17 @@ MainActivity -> GameActivity (SDLActivity) -> libmain.so
 ```
 
 The app presents a black (cleared) swapchain and logs paint requests every two
-seconds.
+seconds. The launcher can pick a game folder or use `/sdcard/cod3`, verifies
+`default.xex`, and adds a touch overlay on top of the SDL surface.
+
+Logs go to one file:
+
+```
+/sdcard/Android/data/com.project1944.cod3/files/logfile.txt
+```
+
+The launcher footer shows the path; tap it to copy. `adb pull` that file after
+testing.
 
 ## Requirements
 
@@ -66,8 +77,10 @@ adb install -r android\app\build\outputs\apk\debug\app-debug.apk
 adb shell am start -n com.project1944.cod3/.MainActivity
 ```
 
-Expected: black screen, and logcat lines tagged `project1944` with the SDL video
-driver, the selected Vulkan device and `paint requests/s`.
+Expected: launcher UI with status chips and game-data card, then a black screen
+with the touch overlay, and logcat lines tagged `project1944` with the SDL video
+driver, the selected Vulkan device and `paint requests/s`. The same lines are in
+`logfile.txt`.
 
 ## ReXGlue SDK patch
 
@@ -89,8 +102,11 @@ android/
     build.gradle.kts
     src/main/AndroidManifest.xml
     src/main/java/com/project1944/cod3/
-      MainActivity.java     # launcher / diagnostics
+      MainActivity.java     # launcher, diagnostics, picker
       GameActivity.java     # SDLActivity subclass + content:// bridge
+      GameData.java         # /sdcard/cod3 fallback + SHA-256
+      Logx.java             # logfile.txt + logcat
+      TouchOverlay.java     # on-screen gamepad
     src/main/java/org/libsdl/app/
       ...                   # official SDL3 Android Java glue (zlib)
     src/main/cpp/
@@ -111,7 +127,7 @@ android/
 
 - **M0b** — link the pinned ReXGlue runtime and open its Vulkan presenter. *(done)*
 - **M1** — platform glue: game folder picker, `content://`, GPU plugin loading,
-  input, audio.
+  input, audio. *(launcher, logging, picker and overlay scaffold done)*
 - **M2** — boot the recompiled guest and load the 15 mission modules.
 - **M3** — first rendered frame from the game.
 - **M4** — touch controls, controller, audio, save/load.

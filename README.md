@@ -10,9 +10,10 @@ runtime build for `arm64-v8a` with Vulkan output. It is derived from the Project
 1944 source tree; documentation here covers the Android APK, not any other
 platform target.
 
-> **Status: early bring-up (M0b).** The APK does not contain game code and does
-> not run Call of Duty 3 yet. It proves the build, the Android host layer and the
-> Vulkan presentation path. See [Current status](#current-status).
+> **Status: bring-up (M1a).** The APK still does not contain game code and does
+> not run Call of Duty 3 yet. It proves the build, the Android host layer, the
+> Vulkan presentation path, the launcher UI, game-folder selection and the touch
+> overlay. See [Current status](#current-status).
 
 **Unofficial fan project. Not affiliated with or endorsed by Activision,
 Treyarch, or Microsoft. No game files are included in this repository, and none
@@ -58,7 +59,7 @@ The Android APK is the product:
 | Package | `com.project1944.cod3` |
 | ABI | `arm64-v8a` only |
 | minSdk / targetSdk | 28 / 35 |
-| Version | `0.1.0-m0b` (debug) |
+| Version | `0.1.0-m1a` (debug) |
 | Output | `android/app/build/outputs/apk/debug/app-debug.apk` |
 | Graphics | Vulkan 1.3, `VK_KHR_android_surface` |
 | Host | `SDLActivity` → `libmain.so` → ReXGlue `WindowedApp` |
@@ -102,7 +103,7 @@ flowchart TD
     N[SDL3 audio] --> F
 ```
 
-APK composition today (M0b, debug):
+APK composition today (M1a, debug):
 
 ```
 lib/arm64-v8a/libmain.so          SDL_main + rex::ui objects (window, presenter)
@@ -113,15 +114,26 @@ lib/arm64-v8a/libc++_shared.so    NDK LLVM libc++ (shared STL)
 
 ## Current status
 
-**M0b — ReXGlue runtime + Vulkan presenter.** Verified on the build host:
+**M1a — launcher, logging and input scaffold.** Verified on the build host:
 
 - ReXGlue SDK cross-builds for `arm64-v8a` (`rexcore`, `rexui`, `rexruntime`,
   full SDK build) with the Android patch applied.
 - `libmain.so` links `rex::ui` as an object library and `librexruntime.so` as a
   shared dependency; `SDL_main`, `VulkanProvider::Create` and the Vulkan
   presenter are present.
+- `librexruntime.so` is loaded explicitly before `libmain.so`, so SDL's
+  `JNI_OnLoad` captures the JavaVM before `SDL_main` runs.
 - The APK builds, packages all four native libraries, and reports
-  `versionName = 0.1.0-m0b`.
+  `versionName = 0.1.0-m1a` / `versionCode = 2`.
+- The launcher has a dark card UI, device/RAM/Vulkan chips, a game-data card,
+  All-files access shortcut and the start button.
+- Game data can be selected with the system folder picker (persisted SAF grant)
+  or by placing it at `/sdcard/cod3`. The launcher hashes `default.xex` in the
+  background and compares it with the supported SHA-256.
+- Java and native log lines append to one file:
+  `/sdcard/Android/data/com.project1944.cod3/files/logfile.txt`.
+- `GameActivity` adds a translucent touch overlay: two sticks, ABXY, LB/RB,
+  LT/RT and Back/Start.
 - The app opens a `WindowSDL`, creates a Vulkan provider and presenter, attaches
   the presenter to the `ANativeWindow`, and requests a paint every ~16 ms. With
   no guest image, the presenter clears the swapchain to black and presents.
@@ -129,11 +141,12 @@ lib/arm64-v8a/libc++_shared.so    NDK LLVM libc++ (shared STL)
 
 **Not yet verified:** none of the on-device behaviour. There is no Android
 device attached to the build machine, so the black swapchain, device selection,
-pause/resume surface handling and thermals are unproven.
+pause/resume surface handling, picker flow and touch overlay are unproven.
 
-**Not implemented:** reading game data, generating or loading the 15 mission
-modules, booting the guest, rendering game frames, touch controls, audio,
-save/load, setup UI, release signing.
+**Not implemented:** loading the picked folder into the ReXGlue filesystem
+devices, generating or loading the 15 mission modules, booting the guest,
+rendering game frames, feeding stick axes into the input driver, audio,
+save/load, release signing.
 
 ## Completion estimate
 
@@ -143,18 +156,18 @@ on-device validation is currently 0%.
 | Milestone | Scope | Weight | Status | Contribution |
 | --- | --- | ---: | --- | ---: |
 | M0 | Toolchain, SDK cross-build, SDL3/Vulkan bootstrap, presenter | 15% | done | 15.0% |
-| M1 | Android platform glue: filesystem, `content://`, plugin loading, input, audio | 15% | partial (~40% written, untested) | 6.0% |
+| M1 | Android platform glue: filesystem, `content://`, launcher, game-data picker, overlay | 15% | partial (~55% written, untested) | 8.3% |
 | M2 | Boot recompiled guest, load 15 mission modules | 25% | scaffolding only | 1.0% |
 | M3 | First rendered game frame through Xenos → SPIR-V → Vulkan | 20% | not started | 0% |
 | M4 | Touch controls, controller, audio, save/load | 15% | not started | 0% |
 | M5 | Performance, stability, pause/resume, packaging, release build | 10% | not started | 0% |
-| **Total** | | **100%** | | **≈ 22%** |
+| **Total** | | **100%** | | **≈ 24%** |
 
 What moves the number fastest:
 
 - M1 + M2 on a real device: +14 points if the guest boots and modules load.
 - M3: +20 points, the single largest risk (mobile Vulkan driver coverage).
-- Device validation of M0b: small weight, but it is the gate for everything else.
+- Device validation of M1a: small weight, but it is the gate for everything else.
 
 ## Requirements
 
@@ -204,12 +217,15 @@ android/
     build.gradle.kts                 Android module (minSdk 28, target 35, arm64)
     src/main/AndroidManifest.xml     Permissions, Vulkan/gamepad features, activities
     src/main/java/com/project1944/cod3/
-      MainActivity.java              Launcher / diagnostics screen
+      MainActivity.java              Launcher, diagnostics, game-data picker
       GameActivity.java              SDLActivity host + content:// fd bridge
+      GameData.java                  /sdcard/cod3 fallback + SHA-256 checks
+      Logx.java                      logfile.txt + logcat writer
+      TouchOverlay.java              On-screen gamepad overlay
     src/main/java/org/libsdl/app/    Official SDL3 Android Java glue (zlib)
     src/main/cpp/
       CMakeLists.txt                 SDK cross-build + libmain.so
-      src/main.cpp                   WindowedApp, Vulkan provider/presenter, paint loop
+      src/main.cpp                   WindowedApp, Vulkan presenter, log path JNI
   patches/
     rexglue-android.patch            All Android changes to the pinned SDK
     apply-sdk-patch.ps1              Apply after a fresh submodule checkout
@@ -271,7 +287,7 @@ Notes:
   patch adds Android implementations.
 - `g_guest_phys_host_offset` is computed at runtime because Android page size may
   be 4 KB or 16 KB.
-- `librexgpu-xenos.so` is packaged but not loaded in M0b.
+- `librexgpu-xenos.so` is packaged but not loaded in M1a.
 
 ### 3. Regenerate the SDK patch (only if you edit the SDK)
 
@@ -302,33 +318,82 @@ adb install -r android\app\build\outputs\apk\debug\app-debug.apk
 adb shell am start -n com.project1944.cod3/.MainActivity
 ```
 
-Expected on a working M0b device:
+Expected on a working M1a device:
 
-- a black screen (cleared swapchain), landscape, edge-to-edge;
-- logcat lines tagged `project1944` with the SDL video driver, the selected
+- the launcher opens in landscape with the status chips and game-data card;
+- `PICK FOLDER` opens the system folder picker; choosing the folder that
+  contains `default.xex` stores a persisted grant and shows a SHA-256 verdict;
+- alternatively, putting the data at `/sdcard/cod3` (after granting All-files
+  access) and tapping `USE /sdcard/cod3` works;
+- `START VULKAN SMOKE TEST` opens a black screen (cleared swapchain) with the
+  touch overlay on top;
+- logcat lines tagged `project1944` show the SDL video driver, the selected
   Vulkan device, `Project1944App: initialized, presenting`, and
   `paint requests/s` every two seconds;
+- every Java and native line is also appended to
+  `/sdcard/Android/data/com.project1944.cod3/files/logfile.txt`;
 - no crash when backgrounding and returning.
 
-The launcher screen shows a start button that opens `GameActivity`. Game data
-selection does not exist yet.
+The game itself is still not loaded: the picker verifies the data and passes the
+folder to native code, but the ReXGlue filesystem devices and mission modules
+are part of M2.
+
+## Logging
+
+One file collects everything:
+
+```
+/sdcard/Android/data/com.project1944.cod3/files/logfile.txt
+```
+
+- Java lines come from `Logx` (launcher, picker, lifecycle, overlay presses).
+- Native lines come from the ReXGlue spdlog rotating sink; the same path is
+  passed through `GameActivity.nativeSetPaths()` before `SDL_main` starts.
+- logcat stays enabled as a second channel:
+  `adb logcat -s project1944 rexglue SDL`.
+
+Pull the file after a test run:
+
+```powershell
+adb pull /sdcard/Android/data/com.project1944.cod3/files/logfile.txt
+```
+
+Rotated files are named `logfile.1.txt`, `logfile.2.txt`, ... when the 5 MB
+limit is reached. The launcher footer shows the exact path and copies it on tap.
+
+## Touch overlay
+
+`TouchOverlay` draws two analog sticks, an ABXY diamond, LB/RB, LT/RT and
+Back/Start over the SDL surface. It does not swallow empty-screen touches, so
+the underlying `SurfaceView` still receives them.
+
+Button presses are dispatched as synthetic `SOURCE_GAMEPAD` `KeyEvent`s through
+`SDLActivity.dispatchKeyEvent()` and recorded in `logfile.txt`. The stick
+positions are visual-only for now: feeding them into the ReXGlue input driver is
+M4 work. Until then the overlay is a working UI scaffold, not a playable pad.
 
 ## Testing on a device
 
-Current checklist for validating M0b hardware behaviour:
+Current checklist for validating M1a hardware behaviour:
 
 - [ ] `adb devices` lists the phone and `doctor.ps1` reports Vulkan 1.3.
-- [ ] APK installs (`arm64-v8a`, API 28+).
+- [ ] APK installs (`arm64-v8a`, API 28+, version `0.1.0-m1a`).
+- [ ] Launcher UI renders correctly, no clipped cards in landscape.
+- [ ] All-files access button opens the correct Settings page.
+- [ ] `PICK FOLDER` returns a path and shows the SHA-256 verdict.
+- [ ] `/sdcard/cod3` fallback finds `default.xex`.
+- [ ] Touch overlay is visible and its buttons highlight on press.
+- [ ] Empty-screen touches still reach the SDL surface.
 - [ ] App opens without a native crash; no `dlopen`/`JNI_OnLoad` errors.
 - [ ] Vulkan provider selects a physical device and a present-capable queue.
 - [ ] `paint requests/s` stabilises near 60.
 - [ ] Screen is black, not garbage or a stale buffer.
 - [ ] Home then resume: swapchain reattaches, painting continues.
-- [ ] Rotation/lock: no device loss; if it breaks, capture the logcat.
+- [ ] `logfile.txt` exists, contains Java and native lines, and survives reload.
 - [ ] 10-minute run: no thermal shutdown, no memory growth.
 
-Attach the relevant `logcat` slice and device model/driver version to any report.
-Do not upload game files.
+Attach `logfile.txt` (or the relevant `logcat` slice) and device model/driver
+version to any report. Do not upload game files.
 
 ## Roadmap and TODO
 
@@ -342,20 +407,25 @@ Do not upload game files.
 - [x] Continuous paint loop and swapchain clear
 - [x] APK packaging and symbol checks
 - [x] `content://` fd JNI bridge (native side)
-- [ ] On-device validation of M0b
+- [ ] On-device validation of M1a
 
 ### M1 — Android platform glue (in progress)
 
 - [x] ucontext AArch64 fibers
 - [x] Page-size-independent guest memory offset
 - [x] logcat logging backend
+- [x] Single `logfile.txt` sink for Java and native logs
 - [x] Native library directory discovery without JNI
 - [x] `openContentFd` bridge on the Java side
-- [ ] Game folder picker and persisted All-files access
-- [ ] Game data validation (`default.xex` SHA-256, Title ID)
+- [x] Launcher UI with device diagnostics
+- [x] Game folder picker with persisted SAF permission
+- [x] `/sdcard/cod3` fallback
+- [x] `default.xex` presence and SHA-256 verification
+- [x] Touch overlay UI and synthetic gamepad key dispatch
+- [ ] Feed the overlay sticks/buttons into the ReXGlue input driver
+- [ ] Mount the selected folder into the guest filesystem devices
 - [ ] Load `librexgpu-xenos.so` from `nativeLibraryDir` and verify the plugin ABI
 - [ ] Shader cache directory under app storage
-- [ ] Gamepad mapping, touch overlay skeleton
 - [ ] SDL audio device selection and buffer sizing
 - [ ] Pause/resume handling for graphics and audio
 
@@ -402,17 +472,20 @@ Do not upload game files.
 - [ ] `ANDROID_HOME`, NDK, CMake, JDK 17 available
 - [ ] `build-debug.ps1` finishes with `BUILD SUCCESSFUL`
 - [ ] APK contains `libmain.so`, `librexruntime.so`, `libc++_shared.so`, `librexgpu-xenos.so`
-- [ ] `llvm-nm` shows `SDL_main` and `VulkanProvider::Create` in `libmain.so`
+- [ ] `llvm-nm` shows `SDL_main`, `nativeSetPaths` and `VulkanProvider::Create` in `libmain.so`
 - [ ] `export-sdk-patch.ps1` run after any SDK edit and reverse-apply verified
 
 ### Device checklist
 
 - [ ] All-files access granted
+- [ ] Folder picker returns the game folder; SHA-256 verdict shown
+- [ ] `/sdcard/cod3` fallback works
 - [ ] Vulkan 1.3 reported by `doctor.ps1`
 - [ ] Black swapchain, stable `paint requests/s`
+- [ ] Touch overlay visible; empty touches pass through
+- [ ] `logfile.txt` has both Java and native lines
 - [ ] Background/resume survives
 - [ ] 10-minute stability run
-- [ ] Logcat captured for the session
 
 ### Release checklist
 
@@ -434,7 +507,8 @@ Do not upload game files.
 | 6 GB RAM floor | Guest memory + GPU caches may not fit | Measure real usage; expose memory settings |
 | Surface destroy/recreate | Stale `ANativeWindow` after pause | Reattach logic exists; verify and harden |
 | Thermal throttling | Frame time spikes on long sessions | Frame cap, quality settings |
-| Missing launcher flow | No way to point the APK at game data yet | M1 picker + verification |
+| Missing input bridge | Overlay renders but sticks are not yet fed to the guest | M4 virtual gamepad driver; keys already dispatch |
+| Scoped storage | Raw `/sdcard` paths unreadable without All-files access | Launcher detects and opens the All-files settings page |
 | Inherited runtime bugs | Grass strips, untested levels | Track upstream issues; do not regress |
 
 ## Troubleshooting
@@ -446,7 +520,10 @@ Do not upload game files.
 | `SDL_InitSubSystem(SDL_INIT_VIDEO) failed` | Run on the UI thread started by `SDLActivity`; check logcat for the SDL driver |
 | No Vulkan device | `doctor.ps1`; driver must expose Vulkan 1.3 and a present-capable queue |
 | Black screen but no paint logs | Presenter did not attach: check `ANativeWindow` pointer and surface size |
-| Paint logs but nothing visible | The swapchain is cleared to black by design in M0b |
+| Paint logs but nothing visible | The swapchain is cleared to black by design in M1a |
+| Picker path is null | Folder is not reachable as an absolute path; copy it to `/sdcard/cod3` |
+| `default.xex not found` | Grant All-files access; confirm the path shown in the game-data card |
+| No `logfile.txt` | External files dir unavailable; check `/sdcard/Android/data/com.project1944.cod3/files/` |
 | Build fails in `rex_version.cmake` | Patch not applied, or `SOURCE_DIR` fix missing |
 | `librexruntime.so` missing from APK | Check the CMake output directory; Gradle must own `obj/arm64-v8a` |
 | Gradle cannot find CMake 3.30.5 | Install it from SDK Manager or point `cmake.dir` at the SDK copy |

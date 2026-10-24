@@ -18,9 +18,12 @@
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
+#include <filesystem>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
+#include <utility>
 
 #include <rex/cvar.h>
 #include <rex/logging.h>
@@ -40,6 +43,24 @@ constexpr char kAppIdentifier[] = "project1944";
 constexpr char kLogTag[] = "project1944";
 
 #define ALOGE(...) __android_log_print(ANDROID_LOG_ERROR, kLogTag, __VA_ARGS__)
+
+// Paths supplied by GameActivity before SDLActivity starts the native thread.
+// They are deliberately plain strings: the JNI setter may run on the UI thread
+// while RunAndroidApp reads them on the SDL thread.
+std::mutex g_host_paths_mutex;
+std::string g_log_file_path;
+std::string g_game_data_path;
+
+void SetHostPaths(std::string log_file, std::string game_data) {
+  std::lock_guard lock(g_host_paths_mutex);
+  g_log_file_path = std::move(log_file);
+  g_game_data_path = std::move(game_data);
+}
+
+std::pair<std::string, std::string> GetHostPaths() {
+  std::lock_guard lock(g_host_paths_mutex);
+  return {g_log_file_path, g_game_data_path};
+}
 
 // ApplicationInfo.nativeLibraryDir without JNI: the loader path of this
 // library is the native library directory.
@@ -158,12 +179,46 @@ int RunAndroidApp(int argc, char** argv) {
 
   rex::SetAndroidApplicationContext(java_vm, SDL_GetAndroidActivity(), lib_dir.c_str());
 
+  const auto [log_file, game_data] = GetHostPaths();
+
   auto remaining = rex::cvar::Init(argc, argv);
   (void)remaining;
   rex::cvar::ApplyEnvironment();
   rex::InitLoggingEarly();
 
-  REXLOG_INFO("android_main: app={} lib_dir={}", kAppIdentifier, lib_dir);
+  // The Java layer owns the log location (app external files dir) so the user
+  // can pull one predictable logfile.txt. Keep logcat as the early sink.
+  if (!log_file.empty()) {
+    std::error_code ec;
+    std::filesystem::create_directories(
+        std::filesystem::path(log_file).parent_path(), ec);
+    try {
+      rex::LogConfig log_config;
+      log_config.log_file = log_file.c_str();
+      log_config.log_to_console = false;
+      log_config.default_level =
+          rex::ParseLogLevelOr(REXCVAR_GET(log_level), spdlog::level::info);
+      log_config.flush_level = spdlog::level::info;
+      rex::InitLogging(log_config);
+    } catch (const std::exception& e) {
+      ALOGE("file logging unavailable (%s): %s", log_file.c_str(), e.what());
+    }
+  }
+
+  REXLOG_INFO("android_main: app={} lib_dir={} log_file={}", kAppIdentifier, lib_dir,
+              log_file);
+  REXLOG_INFO("android_main: game data dir={}", game_data);
+
+  if (!game_data.empty()) {
+    const auto xex = std::filesystem::path(game_data) / "default.xex";
+    std::error_code ec;
+    const auto size = std::filesystem::file_size(xex, ec);
+    if (ec) {
+      REXLOG_WARN("android_main: default.xex missing in {}", game_data);
+    } else {
+      REXLOG_INFO("android_main: default.xex found ({} bytes)", size);
+    }
+  }
 
   if (!rex::InitializeAndroidSystemForApplicationContext()) {
     return EXIT_FAILURE;
@@ -190,10 +245,31 @@ int RunAndroidApp(int argc, char** argv) {
 
   rex::ShutdownAndroidSystem();
   REXLOG_INFO("android_main: exiting with code {}", result);
+  rex::FlushLogging();
   return result;
 }
 
 }  // namespace
+
+// Called from GameActivity.onCreate() before SDLActivity starts SDL_main.
+// Both strings are copied immediately; the Java side may recycle them.
+extern "C" JNIEXPORT void JNICALL
+Java_com_project1944_cod3_GameActivity_nativeSetPaths(JNIEnv* env, jclass, jstring log_file,
+                                                      jstring game_data) {
+  auto to_string = [env](jstring value) {
+    if (!value) {
+      return std::string();
+    }
+    const char* utf = env->GetStringUTFChars(value, nullptr);
+    if (!utf) {
+      return std::string();
+    }
+    std::string result(utf);
+    env->ReleaseStringUTFChars(value, utf);
+    return result;
+  };
+  SetHostPaths(to_string(log_file), to_string(game_data));
+}
 
 REX_DEFINE_APP(project1944, CreateProject1944App);
 
