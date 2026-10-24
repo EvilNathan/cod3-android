@@ -1,161 +1,204 @@
-#include <SDL3/SDL.h>
-#include <SDL3/SDL_gpu.h>
-#include <SDL3/SDL_main.h>
+/**
+ * Project 1944 - Android native entry point.
+ *
+ * M0b: drives the ReXGlue WindowedApp lifecycle on SDLActivity's native
+ * thread. The app opens an SDL3 window, creates the Vulkan provider and
+ * presenter, and presents continuously through VK_KHR_android_surface.
+ *
+ * @added Project 1944 Android port, 2026
+ */
 
-#include <cmath>
-#include <cstdio>
+#include <SDL3/SDL_main.h>
+#include <SDL3/SDL_system.h>
+
+#include <android/log.h>
+#include <dlfcn.h>
+#include <jni.h>
+
+#include <atomic>
+#include <chrono>
+#include <cstdlib>
+#include <memory>
+#include <string>
+#include <thread>
+
+#include <rex/cvar.h>
+#include <rex/logging.h>
+#include <rex/main_android.h>
+#include <rex/platform.h>
+#include <rex/ui/vulkan/presenter.h>
+#include <rex/ui/vulkan/provider.h>
+#include <rex/ui/window_sdl.h>
+#include <rex/ui/windowed_app.h>
+#include <rex/ui/windowed_app_context_sdl.h>
+
+#if REX_PLATFORM_ANDROID
 
 namespace {
 
-constexpr const char* kLogTag = "project1944";
+constexpr char kAppIdentifier[] = "project1944";
+constexpr char kLogTag[] = "project1944";
 
-void log_sdl_error(const char* what) {
-  SDL_Log("[%s] %s failed: %s", kLogTag, what, SDL_GetError());
+#define ALOGE(...) __android_log_print(ANDROID_LOG_ERROR, kLogTag, __VA_ARGS__)
+
+// ApplicationInfo.nativeLibraryDir without JNI: the loader path of this
+// library is the native library directory.
+std::string QueryNativeLibraryDir() {
+  Dl_info info{};
+  if (dladdr(reinterpret_cast<void*>(&QueryNativeLibraryDir), &info) && info.dli_fname) {
+    std::string path(info.dli_fname);
+    const size_t slash = path.find_last_of('/');
+    if (slash != std::string::npos) {
+      return path.substr(0, slash);
+    }
+  }
+  return {};
+}
+
+JavaVM* QueryJavaVm() {
+  auto* env = static_cast<JNIEnv*>(SDL_GetAndroidJNIEnv());
+  JavaVM* vm = nullptr;
+  if (env && env->GetJavaVM(&vm) == JNI_OK) {
+    return vm;
+  }
+  return nullptr;
+}
+
+class Project1944App final : public rex::ui::WindowedApp {
+ public:
+  explicit Project1944App(rex::ui::WindowedAppContext& app_context)
+      : WindowedApp(app_context, kAppIdentifier) {}
+  ~Project1944App() override = default;
+
+  bool OnInitialize() override {
+    window_ = std::make_unique<rex::ui::WindowSDL>(app_context(), "Project 1944", 1280, 720);
+    if (!window_->Open()) {
+      REXLOG_ERROR("Project1944App: window could not be opened");
+      return false;
+    }
+
+    provider_ = rex::ui::vulkan::VulkanProvider::Create(false, true);
+    if (!provider_) {
+      REXLOG_ERROR("Project1944App: Vulkan provider creation failed");
+      return false;
+    }
+
+    presenter_ = provider_->CreatePresenter();
+    if (!presenter_) {
+      REXLOG_ERROR("Project1944App: Vulkan presenter creation failed");
+      return false;
+    }
+
+    window_->SetPresenter(presenter_.get());
+
+    paint_thread_ = std::thread([this]() { PaintLoop(); });
+    REXLOG_INFO("Project1944App: initialized, presenting");
+    return true;
+  }
+
+ protected:
+  void OnDestroy() override {
+    paint_stop_.store(true, std::memory_order_release);
+    if (paint_thread_.joinable()) {
+      paint_thread_.join();
+    }
+    if (window_) {
+      window_->SetPresenter(nullptr);
+    }
+    presenter_.reset();
+    window_.reset();
+    provider_.reset();
+  }
+
+ private:
+  void PaintLoop() {
+    using clock = std::chrono::steady_clock;
+    const auto start = clock::now();
+    auto second_mark = start;
+    uint32_t frames = 0;
+    while (!paint_stop_.load(std::memory_order_acquire)) {
+      if (window_) {
+        window_->RequestPaint();
+      }
+      ++frames;
+      const auto now = clock::now();
+      if (now - second_mark >= std::chrono::seconds(2)) {
+        const double seconds = std::chrono::duration<double>(now - second_mark).count();
+        REXLOG_INFO("Project1944App: {:.1f} paint requests/s", frames / seconds);
+        frames = 0;
+        second_mark = now;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(16));
+    }
+    (void)start;
+  }
+
+  std::unique_ptr<rex::ui::WindowSDL> window_;
+  std::unique_ptr<rex::ui::vulkan::VulkanProvider> provider_;
+  std::unique_ptr<rex::ui::Presenter> presenter_;
+  std::thread paint_thread_;
+  std::atomic<bool> paint_stop_{false};
+};
+
+std::unique_ptr<rex::ui::WindowedApp> CreateProject1944App(
+    rex::ui::WindowedAppContext& app_context) {
+  return std::make_unique<Project1944App>(app_context);
+}
+
+int RunAndroidApp(int argc, char** argv) {
+  const std::string lib_dir = QueryNativeLibraryDir();
+  JavaVM* java_vm = QueryJavaVm();
+  if (!java_vm) {
+    ALOGE("JavaVM unavailable; the runtime cannot bridge to Java");
+    return EXIT_FAILURE;
+  }
+  if (lib_dir.empty()) {
+    ALOGE("nativeLibraryDir unresolved; GPU plugin staging will fail");
+  }
+
+  rex::SetAndroidApplicationContext(java_vm, SDL_GetAndroidActivity(), lib_dir.c_str());
+
+  auto remaining = rex::cvar::Init(argc, argv);
+  (void)remaining;
+  rex::cvar::ApplyEnvironment();
+  rex::InitLoggingEarly();
+
+  REXLOG_INFO("android_main: app={} lib_dir={}", kAppIdentifier, lib_dir);
+
+  if (!rex::InitializeAndroidSystemForApplicationContext()) {
+    return EXIT_FAILURE;
+  }
+
+  int result = EXIT_FAILURE;
+  {
+    rex::ui::SDLWindowedAppContext app_context;
+    if (!app_context.Initialize()) {
+      REXLOG_ERROR("android_main: SDLWindowedAppContext::Initialize failed: {}", SDL_GetError());
+      return EXIT_FAILURE;
+    }
+
+    const auto creator = rex::ui::WindowedApp::GetCreator(kAppIdentifier);
+    if (!creator) {
+      REXLOG_ERROR("android_main: app '{}' is not registered", kAppIdentifier);
+      return EXIT_FAILURE;
+    }
+
+    std::unique_ptr<rex::ui::WindowedApp> app = creator(app_context);
+    result = app->OnInitialize() ? app_context.RunMainMessageLoop() : EXIT_FAILURE;
+    app->InvokeOnDestroy();
+  }
+
+  rex::ShutdownAndroidSystem();
+  REXLOG_INFO("android_main: exiting with code {}", result);
+  return result;
 }
 
 }  // namespace
 
-int main(int argc, char** argv) {
-  (void)argc;
-  (void)argv;
+REX_DEFINE_APP(project1944, CreateProject1944App);
 
-  SDL_SetAppMetadata("Project 1944", "0.1.0-m0a", "com.project1944.cod3");
-  SDL_SetLogPriorities(SDL_LOG_PRIORITY_INFO);
-
-  if (!SDL_Init(SDL_INIT_VIDEO)) {
-    log_sdl_error("SDL_Init(SDL_INIT_VIDEO)");
-    return 1;
-  }
-
-  SDL_Log("[%s] SDL video driver: %s", kLogTag, SDL_GetCurrentVideoDriver());
-
-  SDL_Window* window = SDL_CreateWindow(
-      "Project 1944 - Vulkan smoke test",
-      1280,
-      720,
-      SDL_WINDOW_VULKAN | SDL_WINDOW_HIGH_PIXEL_DENSITY);
-  if (!window) {
-    log_sdl_error("SDL_CreateWindow");
-    SDL_Quit();
-    return 1;
-  }
-
-  SDL_GPUDevice* device =
-      SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_SPIRV, true, nullptr);
-  if (!device) {
-    log_sdl_error("SDL_CreateGPUDevice(SPIR-V)");
-    SDL_DestroyWindow(window);
-    SDL_Quit();
-    return 1;
-  }
-
-  const char* driver = SDL_GetGPUDeviceDriver(device);
-  SDL_Log("[%s] GPU driver: %s", kLogTag, driver ? driver : "(unknown)");
-
-  if (!SDL_ClaimWindowForGPUDevice(device, window)) {
-    log_sdl_error("SDL_ClaimWindowForGPUDevice");
-    SDL_DestroyGPUDevice(device);
-    SDL_DestroyWindow(window);
-    SDL_Quit();
-    return 1;
-  }
-
-  if (!SDL_SetGPUSwapchainParameters(device, window,
-                                     SDL_GPU_SWAPCHAINCOMPOSITION_SDR,
-                                     SDL_GPU_PRESENTMODE_VSYNC)) {
-    // Not fatal: the default swapchain parameters are still usable.
-    SDL_Log("[%s] swapchain parameters not applied: %s", kLogTag, SDL_GetError());
-  }
-
-  Uint64 window_start = SDL_GetTicks();
-  Uint64 frame_count = 0;
-  bool running = true;
-
-  while (running) {
-    SDL_Event event;
-    while (SDL_PollEvent(&event)) {
-      if (event.type == SDL_EVENT_QUIT ||
-          event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) {
-        running = false;
-      } else if (event.type == SDL_EVENT_KEY_DOWN) {
-        if (event.key.key == SDLK_ESCAPE || event.key.key == SDLK_AC_BACK) {
-          running = false;
-        }
-      }
-    }
-
-    SDL_GPUCommandBuffer* command_buffer = SDL_AcquireGPUCommandBuffer(device);
-    if (!command_buffer) {
-      log_sdl_error("SDL_AcquireGPUCommandBuffer");
-      break;
-    }
-
-    SDL_GPUTexture* swapchain_texture = nullptr;
-    Uint32 swapchain_width = 0;
-    Uint32 swapchain_height = 0;
-    if (!SDL_WaitAndAcquireGPUSwapchainTexture(
-            command_buffer, window, &swapchain_texture, &swapchain_width,
-            &swapchain_height)) {
-      log_sdl_error("SDL_WaitAndAcquireGPUSwapchainTexture");
-      SDL_CancelGPUCommandBuffer(command_buffer);
-      break;
-    }
-
-    if (!swapchain_texture) {
-      SDL_CancelGPUCommandBuffer(command_buffer);
-      continue;
-    }
-
-    // A slowly pulsing clear colour is enough to prove that the swapchain is
-    // presenting continuously. It also makes it obvious when the surface has
-    // gone stale (for example after an Android pause/resume cycle).
-    const float phase = static_cast<float>(SDL_GetTicks() % 6000) / 6000.0f;
-    const float pulse = 0.5f - 0.5f * std::cos(phase * 6.28318530718f);
-
-    SDL_GPUColorTargetInfo color_target{};
-    color_target.texture = swapchain_texture;
-    color_target.clear_color = SDL_FColor{
-        0.035f + 0.10f * pulse,
-        0.045f + 0.06f * pulse,
-        0.070f + 0.16f * (1.0f - pulse),
-        1.0f,
-    };
-    color_target.load_op = SDL_GPU_LOADOP_CLEAR;
-    color_target.store_op = SDL_GPU_STOREOP_STORE;
-
-    SDL_GPURenderPass* render_pass =
-        SDL_BeginGPURenderPass(command_buffer, &color_target, 1, nullptr);
-    if (!render_pass) {
-      log_sdl_error("SDL_BeginGPURenderPass");
-      SDL_CancelGPUCommandBuffer(command_buffer);
-      break;
-    }
-    SDL_EndGPURenderPass(render_pass);
-
-    if (!SDL_SubmitGPUCommandBuffer(command_buffer)) {
-      log_sdl_error("SDL_SubmitGPUCommandBuffer");
-      break;
-    }
-
-    ++frame_count;
-    const Uint64 now = SDL_GetTicks();
-    if (now - window_start >= 2000) {
-      const double seconds = static_cast<double>(now - window_start) / 1000.0;
-      SDL_Log("[%s] %llu frames in %.2f s (%.1f FPS), swapchain %ux%u",
-              kLogTag,
-              static_cast<unsigned long long>(frame_count),
-              seconds,
-              static_cast<double>(frame_count) / seconds,
-              swapchain_width,
-              swapchain_height);
-      frame_count = 0;
-      window_start = now;
-    }
-  }
-
-  SDL_ReleaseWindowFromGPUDevice(device, window);
-  SDL_DestroyGPUDevice(device);
-  SDL_DestroyWindow(window);
-  SDL_Quit();
-  return 0;
+int main(int argc, char* argv[]) {
+  return RunAndroidApp(argc, argv);
 }
+
+#endif  // REX_PLATFORM_ANDROID

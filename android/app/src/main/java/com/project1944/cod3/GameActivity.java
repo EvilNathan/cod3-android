@@ -1,7 +1,10 @@
 package com.project1944.cod3;
 
 import android.content.pm.ActivityInfo;
+import android.net.Uri;
 import android.os.Bundle;
+import android.os.ParcelFileDescriptor;
+import android.util.Log;
 
 import org.libsdl.app.SDLActivity;
 
@@ -34,5 +37,19 @@ public final class GameActivity extends SDLActivity {
     @Override
     protected String getMainFunction() {
         return "SDL_main";
+    }
+
+    /**
+     * Resolves a content:// URI for the native filesystem bridge. Called via
+     * JNI from rex::OpenContentUriFdJavaBridge; the returned descriptor is
+     * detached into a raw fd and owned by native code.
+     */
+    public static ParcelFileDescriptor openContentFd(String uri, String mode) {
+        try {
+            return getContext().getContentResolver().openFileDescriptor(Uri.parse(uri), mode);
+        } catch (Exception e) {
+            Log.e("project1944", "openContentFd failed: " + uri, e);
+            return null;
+        }
     }
 }

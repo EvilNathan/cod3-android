@@ -13,18 +13,19 @@ get_filename_component(REX_PROJECT_ROOT "${REX_PROJECT_ROOT}" ABSOLUTE)
 
 set(REXSDK_DIR "${REX_PROJECT_ROOT}/tools/rexglue-source" CACHE PATH
     "Pinned ReXGlue SDK source tree")
-set(SDL3_DIR "${REXSDK_DIR}/thirdparty/sdl3" CACHE PATH
-    "SDL3 source tree (vendored by the ReXGlue SDK)")
 
-if(NOT EXISTS "${SDL3_DIR}/CMakeLists.txt")
+if(NOT EXISTS "${REXSDK_DIR}/CMakeLists.txt")
     message(FATAL_ERROR
-        "SDL3 not found at ${SDL3_DIR}\n"
-        "Run: git submodule update --init --depth 1 tools/rexglue-source\n"
-        "     git -C tools/rexglue-source submodule update --init --depth 1 thirdparty/sdl3")
+        "ReXGlue SDK not found at ${REXSDK_DIR}\n"
+        "Run: git submodule update --init --recursive tools/rexglue-source")
 endif()
 
-# M0a builds SDL3 statically into libmain.so. This avoids shipping a separate
-# libSDL3.so and matches the eventual single-entry-point design.
+# ReXGlue Android build options. SDL3 is built statically by the SDK's
+# thirdparty/CMakeLists.txt into libmain.so.
+set(REXGLUE_USE_VULKAN ON CACHE BOOL "" FORCE)
+set(REXGLUE_ENABLE_TRACY OFF CACHE BOOL "" FORCE)
+set(REXGLUE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(REXGLUE_ENABLE_PERF_COUNTERS OFF CACHE BOOL "" FORCE)
 set(SDL_SHARED OFF CACHE BOOL "" FORCE)
 set(SDL_STATIC ON CACHE BOOL "" FORCE)
 set(SDL_TEST OFF CACHE BOOL "" FORCE)
@@ -33,11 +34,10 @@ set(SDL_INSTALL OFF CACHE BOOL "" FORCE)
 set(SDL_VIDEO ON CACHE BOOL "" FORCE)
 set(SDL_AUDIO ON CACHE BOOL "" FORCE)
 set(SDL_JOYSTICK ON CACHE BOOL "" FORCE)
-set(SDL_HAPTIC ON CACHE BOOL "" FORCE)
 set(SDL_SENSOR ON CACHE BOOL "" FORCE)
 set(SDL_POWER ON CACHE BOOL "" FORCE)
 
-add_subdirectory("${SDL3_DIR}" sdl3 EXCLUDE_FROM_ALL)
+add_subdirectory("${REXSDK_DIR}" rexglue EXCLUDE_FROM_ALL)
 
 add_library(main SHARED
     src/main.cpp
@@ -49,7 +49,15 @@ target_compile_definitions(main PRIVATE
 target_compile_options(main PRIVATE
     -Wall -Wextra -Wno-unused-parameter
 )
-target_link_libraries(main PRIVATE SDL3::SDL3)
+
+# rex::ui is an OBJECT library: its objects are embedded into libmain.so.
+# rex::runtime is shared and is packaged alongside libmain.so by Gradle.
+target_link_libraries(main PRIVATE
+    rex::ui
+    rex::runtime
+    SDL3::SDL3
+)
+
 target_link_options(main PRIVATE
     -Wl,--export-dynamic
 )

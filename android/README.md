@@ -6,17 +6,35 @@ PC port and is intended for personal use with a legally owned copy of the game.
 
 ## Status
 
-**M0a — Android toolchain + SDL3 + Vulkan smoke test.**
+**M0b - ReXGlue runtime + Vulkan presenter.**
 
-The APK in this milestone does not contain game code and does not run Call of
-Duty 3. It proves that the following path works on the target phone:
+The APK still does not contain game code and does not run Call of Duty 3. It
+proves the full presentation path on the target phone:
 
 ```
-Android Activity -> SDLActivity -> libmain.so -> SDL3 GPU (Vulkan) -> swapchain
+Android Activity -> SDLActivity -> libmain.so
+  -> ReXGlue WindowedApp -> SDL3 window -> VulkanPresenter -> swapchain
 ```
 
-Once M0a is green, the next milestones add the ReXGlue runtime, the 15 mission
-modules, touch controls, audio and the actual game.
+The app presents a black (cleared) swapchain continuously and logs paint
+requests every two seconds. Once M0b is green, the next milestones add the
+15 mission modules, touch controls, audio and the actual game.
+
+## ReXGlue SDK patch
+
+`tools/rexglue-source` stays at upstream pin
+`0c7b01a0ac0479801757507d80533f662fa0815d`. All Android changes live in a
+patch:
+
+```powershell
+# after a fresh submodule checkout
+.\android\patches\apply-sdk-patch.ps1
+
+# after editing the SDK, regenerate the patch
+.\android\patches\export-sdk-patch.ps1
+```
+
+Never commit the SDK submodule's modified working tree; commit the patch.
 
 ## Requirements
 
@@ -70,8 +88,9 @@ Watch logs:
 .\android\scripts\logcat.ps1
 ```
 
-You should see a pulsing dark-blue screen and log lines containing
-`project1944` and the GPU driver name (normally `vulkan`).
+You should see a black screen (a cleared Vulkan swapchain) and log lines
+containing `project1944`, the selected Vulkan device and
+`paint requests/s`.
 
 ## Layout
 
@@ -87,7 +106,11 @@ android/
       ...                   # official SDL3 Android Java glue (zlib)
     src/main/cpp/
       CMakeLists.txt
-      src/main.cpp          # M0a Vulkan clear loop
+      src/main.cpp          # M0b WindowedApp + Vulkan presenter
+  patches/
+    rexglue-android.patch   # pinned SDK Android changes
+    apply-sdk-patch.ps1
+    export-sdk-patch.ps1
   scripts/
     build-debug.ps1
     install-debug.ps1
@@ -97,12 +120,12 @@ android/
 
 ## Next milestones
 
-- **M0b** — link the pinned ReXGlue runtime and open its Vulkan presenter.
-- **M1** — Android platform glue: `main_android`, `surface_android`, fibers,
-  filesystem, logging, GPU plugin loader.
-- **M2** — boot the recompiled guest and load the 15 mission modules.
-- **M3** — first rendered frame from the game.
-- **M4** — touch controls, controller, audio, save/load.
+- **M0b** - link the pinned ReXGlue runtime and open its Vulkan presenter. *(done)*
+- **M1** - Android runtime glue: filesystem, content URIs, GPU plugin loading,
+  input, audio.
+- **M2** - boot the recompiled guest and load the 15 mission modules.
+- **M3** - first rendered frame from the game.
+- **M4** - touch controls, controller, audio, save/load.
 
 ## Legal boundary
 

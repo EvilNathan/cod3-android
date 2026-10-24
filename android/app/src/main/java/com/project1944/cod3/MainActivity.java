@@ -23,7 +23,7 @@ import java.util.Locale;
 /**
  * Minimal launcher for the Android port.
  *
- * M0a is a build smoke test: it proves the NDK, SDL3, JNI and Vulkan surface
+ * M0b drives the ReXGlue runtime: it proves the SDK window, Vulkan provider
  * path work on the device before any ReXGlue runtime or game code is added.
  * The game setup screen (game folder, SHA-256 verification, settings) replaces
  * this in a later milestone.
@@ -63,9 +63,9 @@ public final class MainActivity extends Activity {
         root.addView(title);
 
         TextView subtitle = text(
-                "Milestone M0a — SDL3 + Vulkan surface smoke test.\n"
-                        + "This is not the game yet. It validates the Android build "
-                        + "and GPU presentation path.",
+                "Milestone M0b - ReXGlue Vulkan presenter.\n"
+                        + "This is not the game yet. It validates the Android build, "
+                        + "ReXGlue window and GPU presentation path.",
                 16,
                 Color.rgb(176, 184, 192));
         subtitle.setLineSpacing(dp(3), 1.0f);
