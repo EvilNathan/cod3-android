@@ -1,35 +1,36 @@
-<p align="center"><img src="launcher/assets/hero.jpg" width="800" alt="Project 1944 artwork created for the launcher"></p>
+<p align="center"><img src="launcher/assets/hero.jpg" width="800" alt="Project 1944 artwork"></p>
 
-# Project 1944 — Android port (`cod3-android`)
+# Project 1944 — Android (`cod3-android`)
 
-**An unofficial, native ARM64 Android port of Call of Duty 3 (Xbox 360), built on static recompilation. No emulator, no JIT, no runtime translation of PowerPC code.**
+**Native ARM64 Android build of the Project 1944 recompiled runtime. No emulator, no JIT.**
 
-This repository is the Android port of [Project 1944](https://github.com/zenit2893-cmyk/project-1944).
-It inherits the Windows PC port sources from upstream and adds the Android
-platform layer, the NDK/Gradle build, and the ReXGlue SDK patches required to
-build the recompiled runtime for `arm64-v8a` with Vulkan output.
+This repository contains the Android target only: the Gradle/NDK project, the
+Android platform layer for the ReXGlue runtime, and the SDK patch that makes the
+runtime build for `arm64-v8a` with Vulkan output. It is derived from the Project
+1944 source tree; documentation here covers the Android APK, not any other
+platform target.
 
-> **Status: early bring-up (M0b).** The APK does not contain game code yet and
-> does not run Call of Duty 3. It proves the toolchain, SDL3 host, ReXGlue
-> runtime and Vulkan presentation path. See [Current status](#current-status).
+> **Status: early bring-up (M0b).** The APK does not contain game code and does
+> not run Call of Duty 3 yet. It proves the build, the Android host layer and the
+> Vulkan presentation path. See [Current status](#current-status).
 
 **Unofficial fan project. Not affiliated with or endorsed by Activision,
-Treyarch, or Microsoft. No game files are included in this repository, and
-none will ever be. You need your own legally obtained copy of Call of Duty 3
-for Xbox 360.**
+Treyarch, or Microsoft. No game files are included in this repository, and none
+will ever be. You need your own legally obtained copy of Call of Duty 3 for
+Xbox 360.**
 
 ---
 
 ## Table of contents
 
-- [What this project is](#what-this-project-is)
-- [How it is possible](#how-it-is-possible)
+- [What this is](#what-this-is)
+- [How it works](#how-it-works)
 - [Architecture](#architecture)
 - [Current status](#current-status)
 - [Completion estimate](#completion-estimate)
 - [Requirements](#requirements)
 - [Repository layout](#repository-layout)
-- [Build from source](#build-from-source)
+- [Build the APK](#build-the-apk)
 - [Install and run](#install-and-run)
 - [Testing on a device](#testing-on-a-device)
 - [Roadmap and TODO](#roadmap-and-todo)
@@ -42,68 +43,49 @@ for Xbox 360.**
 
 ---
 
-## What this project is
+## What this is
 
-[Call of Duty 3](https://en.wikipedia.org/wiki/Call_of_Duty_3) shipped on Xbox 360
-as PowerPC code running on a Xenos GPU. Project 1944 statically recompiles that
-PowerPC code into C++ once, offline, and then compiles it into a native host
-binary. The result is an ordinary native application that calls the game's own
-recompiled functions directly — the original console CPU is never emulated.
+Call of Duty 3 on Xbox 360 is PowerPC code running on a Xenos GPU. Project 1944
+statically recompiles that PowerPC code into C++ offline, so the game's own
+functions become native host code. This repository builds that code and its
+runtime for Android `arm64-v8a` and drives it through SDL3 and Vulkan on the
+phone.
 
-This repository takes that recompiled runtime and host code and ports the
-**platform layer** to Android:
+The Android APK is the product:
 
-| Upstream (Windows PC) | This repository (Android) |
+| Item | Value |
 | --- | --- |
-| Win32 window, Direct3D 12 output | `SDLActivity` + SDL3 window + Vulkan (`VK_KHR_android_surface`) |
-| MSVC / Clang for Windows x64 | NDK r27 Clang, `arm64-v8a` only, API 28+ |
-| Win32 fibers, `VirtualAlloc`, `CreateFile` | bionic `ucontext` shims, `mmap`, POSIX filesystem, `content://` fd bridge |
-| 15 level DLLs | 15 level shared objects (planned), loaded from app-private storage |
-| Launcher (WPF) | Minimal Java setup screen (planned), All-files access for game data |
-| DirectInput / XInput | Android gamepad + touch controls (planned) |
-| WASAPI / XAudio | SDL3 audio via OpenSLES/AAudio (planned) |
+| Package | `com.project1944.cod3` |
+| ABI | `arm64-v8a` only |
+| minSdk / targetSdk | 28 / 35 |
+| Version | `0.1.0-m0b` (debug) |
+| Output | `android/app/build/outputs/apk/debug/app-debug.apk` |
+| Graphics | Vulkan 1.3, `VK_KHR_android_surface` |
+| Host | `SDLActivity` → `libmain.so` → ReXGlue `WindowedApp` |
 
-The Windows PC port is the reference implementation and remains playable. This
-is a separate target, not a wrapper around it.
+## How it works
 
-## How it is possible
-
-Five pieces make a native Android port feasible without an emulator:
-
-1. **Offline static recompilation.** [XenonRecomp](https://github.com/hedge-dev/XenonRecomp)
-   turns the Xbox 360 `default.xex` PowerPC code into C++ functions with explicit
-   guest state. The game's own control flow becomes host code. Nothing has to
-   decode PowerPC instructions at runtime, which is why no JIT and no emulator
-   core are needed.
-2. **A recompilation runtime instead of a console kernel.**
-   [ReXGlue](https://github.com/rexglue/rexglue-sdk) provides the host-side
-   runtime: guest memory, kernel exports (Xboxkrnl/NTDLL stubs), threading,
-   fibers, filesystem devices, module loading and app lifecycle. The Android
-   port adds the bionic-specific pieces: ucontext-based fibers on AArch64,
-   `ashmem`-free shared memory, 4 KB/16 KB page-size handling, logcat logging,
-   and a JNI bridge for `content://` file descriptors.
-3. **GPU emulation through Vulkan.** Xenos command packets (PM4) are parsed by
-   the Xenia-derived graphics layer. Shaders compiled for Xenos are translated
-   to SPIR-V at runtime and submitted to the phone's Vulkan driver. On Adreno
-   this is a well-supported path, which is why Snapdragon devices are the
-   priority target.
-4. **SDL3 as the Android host.** SDL3 owns the `SurfaceView`, the native
-   `ANativeWindow`, input events, audio and lifecycle. `SDLActivity` starts a
-   dedicated native thread that calls `SDL_main` in `libmain.so`; the ReXGlue
-   `WindowedApp` runs its message loop on that thread.
-5. **Data stays where the user put it.** Game data is read in place from a
-   user-selected folder using `MANAGE_EXTERNAL_STORAGE`, with `content://` URIs
-   resolved to raw file descriptors when a document provider is involved. No
-   game data is copied into the repository or the APK.
-
-Everything is ordinary Clang/NDK, CMake and Gradle — the hard part is the
-graphics and platform glue, not the build system.
+1. **Static recompilation, offline.** The Xbox 360 `default.xex` is translated
+   to C++ on a build machine. No PowerPC instructions are decoded at runtime.
+2. **ReXGlue runtime.** Guest memory, kernel exports, threads, fibers, module
+   loading and app lifecycle are provided by the ReXGlue SDK. The Android patch
+   adds AArch64 ucontext fibers, bionic memory/filesystem handling, 4 KB/16 KB
+   page-size support, logcat logging, and a JNI bridge for `content://` files.
+3. **Xenos → Vulkan.** Xenos command packets are processed by the Xenia-derived
+   graphics layer; shaders are translated to SPIR-V and submitted to the phone's
+   Vulkan driver. Adreno is the priority target.
+4. **SDL3 host.** SDL3 owns the `SurfaceView`, the native `ANativeWindow`, input
+   and lifecycle. It starts the native thread that calls `SDL_main` in
+   `libmain.so`; the ReXGlue `WindowedApp` message loop runs there.
+5. **Game data stays in place.** The APK reads the user's own game folder
+   through All-files access; `content://` URIs are converted to raw descriptors
+   when needed. No game data is copied into the APK or this repository.
 
 ## Architecture
 
 ```mermaid
 flowchart TD
-    A[Own Xbox 360 copy: default.xex] -->|offline, on PC| B[ReXGlue / XenonRecomp]
+    A[Own Xbox 360 copy: default.xex] -->|offline, on build machine| B[ReXGlue / XenonRecomp]
     B --> C[Generated game C++ + 15 mission modules]
     C --> D[NDK Clang arm64-v8a]
     E[ReXGlue SDK + Android patch] --> D
@@ -136,18 +118,18 @@ lib/arm64-v8a/libc++_shared.so    NDK LLVM libc++ (shared STL)
 - ReXGlue SDK cross-builds for `arm64-v8a` (`rexcore`, `rexui`, `rexruntime`,
   full SDK build) with the Android patch applied.
 - `libmain.so` links `rex::ui` as an object library and `librexruntime.so` as a
-  shared dependency; symbols `SDL_main`, `VulkanProvider::Create` and the
-  Vulkan presenter are present.
-- The APK builds, packages all four native libraries, and declares
-  `com.project1944.cod3` with `versionName = 0.1.0-m0b`.
+  shared dependency; `SDL_main`, `VulkanProvider::Create` and the Vulkan
+  presenter are present.
+- The APK builds, packages all four native libraries, and reports
+  `versionName = 0.1.0-m0b`.
 - The app opens a `WindowSDL`, creates a Vulkan provider and presenter, attaches
   the presenter to the `ANativeWindow`, and requests a paint every ~16 ms. With
   no guest image, the presenter clears the swapchain to black and presents.
 - Logs every two seconds: `Project1944App: ... paint requests/s`.
 
 **Not yet verified:** none of the on-device behaviour. There is no Android
-device attached to the build machine, so the black swapchain, Vulkan device
-selection, pause/resume surface re-creation and thermals are unproven.
+device attached to the build machine, so the black swapchain, device selection,
+pause/resume surface handling and thermals are unproven.
 
 **Not implemented:** reading game data, generating or loading the 15 mission
 modules, booting the guest, rendering game frames, touch controls, audio,
@@ -155,8 +137,8 @@ save/load, setup UI, release signing.
 
 ## Completion estimate
 
-Weighted engineering estimate, based only on source-level progress. It is not a
-promise, and it does not include on-device validation, which is currently 0%.
+Weighted engineering estimate, source-level only. It is not a promise, and
+on-device validation is currently 0%.
 
 | Milestone | Scope | Weight | Status | Contribution |
 | --- | --- | ---: | --- | ---: |
@@ -188,8 +170,7 @@ What moves the number fastest:
 | Permissions | All-files access (`MANAGE_EXTERNAL_STORAGE`) to read the game folder |
 
 The manifest declares `android.hardware.vulkan.version = 0x00400003` (Vulkan 1.3)
-as required. Devices without Vulkan 1.3 will not be offered the APK by the
-installer.
+as required, so the installer will not offer the APK to devices without it.
 
 ### Build host
 
@@ -215,6 +196,8 @@ Any other revision is untested and may produce broken generated code.
 
 ## Repository layout
 
+Only the Android-relevant paths are listed.
+
 ```
 android/
   app/
@@ -236,23 +219,18 @@ android/
     install-debug.ps1                adb install + launch
     logcat.ps1                       Filtered logcat
     doctor.ps1                       Device/feature/permission checks
-  README.md                          Android-specific notes
-cod3-pc/                             Upstream Windows host sources
-integration/                         Upstream runtime patches and packaging
-launcher/                            Upstream WPF launcher and artwork
-scripts/, analysis/, tests/          Upstream tooling and verification
+  README.md                          Short APK build/run notes
 tools/rexglue-source                 ReXGlue SDK submodule (pinned, patched)
-tools/XenonRecomp, tools/XenosRecomp Upstream recompilers (submodules)
+tools/XenonRecomp, tools/XenosRecomp Recompilers used to generate game C++
 tools/Xenia-source                   GPU/kernel reference (submodule)
-docs/                                Player guides and engineering log
 ```
 
 The SDK submodule is pinned to `0c7b01a0ac0479801757507d80533f662fa0815d`.
 All Android changes to it live in `android/patches/rexglue-android.patch`
 (22 files, +881/−37 at the time of writing), so a fresh checkout plus the patch
-reproduces the build.
+reproduces the APK build.
 
-## Build from source
+## Build the APK
 
 ### 1. Prepare the toolchain and submodules
 
@@ -264,10 +242,10 @@ git -C tools/rexglue-source submodule update --init --depth 1 `
 .\android\patches\apply-sdk-patch.ps1
 ```
 
-Set `ANDROID_HOME` (or rely on `android/local.properties`) to an SDK with
-API 35, build-tools 35.x and NDK `27.3.13750724`.
+Set `ANDROID_HOME` (or rely on `android/local.properties`) to an SDK with API 35,
+build-tools 35.x and NDK `27.3.13750724`.
 
-### 2. Build the APK
+### 2. Build
 
 ```powershell
 .\android\scripts\build-debug.ps1
@@ -293,6 +271,7 @@ Notes:
   patch adds Android implementations.
 - `g_guest_phys_host_offset` is computed at runtime because Android page size may
   be 4 KB or 16 KB.
+- `librexgpu-xenos.so` is packaged but not loaded in M0b.
 
 ### 3. Regenerate the SDK patch (only if you edit the SDK)
 
@@ -341,15 +320,15 @@ Current checklist for validating M0b hardware behaviour:
 - [ ] `adb devices` lists the phone and `doctor.ps1` reports Vulkan 1.3.
 - [ ] APK installs (`arm64-v8a`, API 28+).
 - [ ] App opens without a native crash; no `dlopen`/`JNI_OnLoad` errors.
-- [ ] Vulkan provider selects a physical device and queues a present-capable family.
+- [ ] Vulkan provider selects a physical device and a present-capable queue.
 - [ ] `paint requests/s` stabilises near 60.
 - [ ] Screen is black, not garbage or a stale buffer.
 - [ ] Home then resume: swapchain reattaches, painting continues.
 - [ ] Rotation/lock: no device loss; if it breaks, capture the logcat.
 - [ ] 10-minute run: no thermal shutdown, no memory growth.
 
-Attach the relevant `logcat` slice and device model/driver version to any
-report. Do not upload game files.
+Attach the relevant `logcat` slice and device model/driver version to any report.
+Do not upload game files.
 
 ## Roadmap and TODO
 
@@ -382,7 +361,7 @@ report. Do not upload game files.
 
 ### M2 — Guest boot and mission modules (not started)
 
-- [ ] Generate game C++ on the PC for the supported XEX
+- [ ] Generate game C++ for the supported XEX
 - [ ] Build 15 mission modules as `arm64-v8a` shared objects
 - [ ] Load/unload modules without leaking guest memory
 - [ ] Kernel export coverage audit on Android
@@ -396,7 +375,7 @@ report. Do not upload game files.
 - [ ] Resolve/copy paths, EDRAM emulation, predicated tiling
 - [ ] Correct texture formats and gamma
 - [ ] Frame pacing and vsync behaviour
-- [ ] Fix known grass/geometry artefacts inherited from the PC port
+- [ ] Fix known grass/geometry artefacts inherited from the upstream runtime
 
 ### M4 — Controls, audio, saves (not started)
 
@@ -441,7 +420,7 @@ report. Do not upload game files.
 - [ ] Keystore created and kept outside the repository
 - [ ] `assembleRelease` signed and verified
 - [ ] SHA-256 recorded next to the APK
-- [ ] APK uploaded only to the private release repository
+- [ ] APK uploaded only to a private release location
 - [ ] No game data, generated C++ or `.so` with game code published
 
 ## Known issues and risks
@@ -455,8 +434,8 @@ report. Do not upload game files.
 | 6 GB RAM floor | Guest memory + GPU caches may not fit | Measure real usage; expose memory settings |
 | Surface destroy/recreate | Stale `ANativeWindow` after pause | Reattach logic exists; verify and harden |
 | Thermal throttling | Frame time spikes on long sessions | Frame cap, quality settings |
-| Missing launcher flow | No way to point the app at game data yet | M1 picker + verification |
-| Inherited PC-port bugs | Grass strips, untested levels | Track upstream issues; do not regress |
+| Missing launcher flow | No way to point the APK at game data yet | M1 picker + verification |
+| Inherited runtime bugs | Grass strips, untested levels | Track upstream issues; do not regress |
 
 ## Troubleshooting
 
@@ -467,7 +446,7 @@ report. Do not upload game files.
 | `SDL_InitSubSystem(SDL_INIT_VIDEO) failed` | Run on the UI thread started by `SDLActivity`; check logcat for the SDL driver |
 | No Vulkan device | `doctor.ps1`; driver must expose Vulkan 1.3 and a present-capable queue |
 | Black screen but no paint logs | Presenter did not attach: check `ANativeWindow` pointer and surface size |
-| Paint logs but nothing visible | Swapchain is cleared to black by design in M0b |
+| Paint logs but nothing visible | The swapchain is cleared to black by design in M0b |
 | Build fails in `rex_version.cmake` | Patch not applied, or `SOURCE_DIR` fix missing |
 | `librexruntime.so` missing from APK | Check the CMake output directory; Gradle must own `obj/arm64-v8a` |
 | Gradle cannot find CMake 3.30.5 | Install it from SDK Manager or point `cmake.dir` at the SDK copy |
@@ -486,22 +465,9 @@ personal use. Do not distribute game-derived binaries; distribute the source and
 the builder instead. The game and its assets remain the property of Activision,
 Treyarch and Microsoft.
 
-The upstream Windows PC port has its own legal notes in
-[docs/legal.md](docs/legal.md) and
-[integration/release-packaging/THIRD-PARTY-NOTICES.md](integration/release-packaging/THIRD-PARTY-NOTICES.md).
-
 ## Credits
 
-This port would not exist without the work below. Thank you.
-
-### Upstream project
-
-- **Project 1944** — [zenit2893-cmyk](https://github.com/zenit2893-cmyk/project-1944):
-  the Windows PC port, launcher, build scripts, documentation and the
-  recompilation pipeline this port is derived from.
-- **GenryTheFox** ([GenryTheFox0](https://github.com/GenryTheFox0)) — help with
-  the Call of Duty 3 PC port and testing; author of Project 2099 and Project
-  Iron 6.
+This Android port would not exist without the work below. Thank you.
 
 ### Recompilation and runtime
 
@@ -518,8 +484,8 @@ This port would not exist without the work below. Thank you.
   Xenos shader recompilation tooling.
 - **Community Android ports of ReXGlue-based games**, including
   **deivid22srk**'s hells-gate-android — architectural reference for the Android
-  entry point, JNI setup and lifecycle. No code is copied; the port here is
-  written against the pinned SDK.
+  entry point, JNI setup and lifecycle. No code is copied; this port is written
+  against the pinned SDK.
 
 ### Graphics and platform
 
@@ -534,25 +500,31 @@ This port would not exist without the work below. Thank you.
 - **Dear ImGui** (MIT) — overlay UI in the SDK.
 - **fmt** (MIT), **spdlog** (MIT), **xxHash** (BSD-2-Clause) — formatting,
   logging and hashing.
-- **FFmpeg** and **libmspack** — video/audio and container support in the SDK and
-  packaging (LGPL terms, see upstream notices).
+- **FFmpeg** and **libmspack** — video/audio and container support in the SDK
+  (LGPL terms, see upstream notices).
 
 ### Toolchain
 
 - **LLVM/Clang** (Apache-2.0 with LLVM exception), **CMake** (BSD-3-Clause),
   **Ninja** (Apache-2.0), **Gradle** (Apache-2.0), **Android Gradle Plugin**
   (Apache-2.0), **Android NDK** and **Android SDK** (Apache-2.0), **GNU
-  binutils**, **PowerShell/WPF**, **adb**.
-- **xdvdfs** by **antangelo** and **PortableMSVC** by **tgbender** — upstream
-  packaging tools.
+  binutils**, **PowerShell**, **adb**.
+- **xdvdfs** by **antangelo** — disc image tooling used by the game-data
+  pipeline.
 - **Bionic** (Android C library) — the platform quirks the Android patch works
   around.
+
+### Upstream project
+
+- **Project 1944** — [zenit2893-cmyk](https://github.com/zenit2893-cmyk/project-1944):
+  the recompilation pipeline, runtime integration and tooling this Android target
+  is derived from.
+- **GenryTheFox** ([GenryTheFox0](https://github.com/GenryTheFox0)) — testing and
+  help with the Call of Duty 3 recompilation.
 
 ### Third-party notices
 
 - `android/THIRD_PARTY_NOTICES.md` — SDL3 Android glue and ReXGlue/Xenia notices.
-- `integration/release-packaging/THIRD-PARTY-NOTICES.md` — upstream bundled
-  components.
 - `licenses/xenia/LICENSE` — Xenia's original BSD-3-Clause notice.
 
 ## License
