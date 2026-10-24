@@ -20,6 +20,7 @@
 !/cod3-pc/
 !/integration/
 !/launcher/
+!/android/
 !/scripts/
 !/tests/
 !/docs/
@@ -115,3 +116,15 @@
 *.obj
 *.pdb
 *.ico
+*.apk
+*.aab
+*.so
+*.jks
+*.keystore
+
+# Android local state and native build outputs.
+/android/local.properties
+/android/.gradle/
+/android/app/.cxx/
+/android/app/build/
+/android/build/
