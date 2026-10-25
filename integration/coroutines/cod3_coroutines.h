@@ -7,10 +7,16 @@ namespace rex::thread {
 struct Fiber;
 }
 
+#if defined(_WIN32)
 #if defined(COD3_COROUTINES_BUILD)
 #define COD3_CORO_API __declspec(dllexport)
 #else
 #define COD3_CORO_API __declspec(dllimport)
+#endif
+#else
+// The bridge is linked into the host image; no import/export decoration is
+// available or needed outside Windows.
+#define COD3_CORO_API
 #endif
 
 namespace cod3::coroutines {

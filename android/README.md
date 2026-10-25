@@ -5,18 +5,19 @@ roadmap and credits are in the [root README](../README.md).
 
 ## Status
 
-**M1a — launcher, logging, game-data picker and touch overlay.** The APK does
-not contain game code and does not run Call of Duty 3 yet. It proves the Android
-presentation path and the setup UI:
+**M2 — recompiled guest wired into the APK.** `libmain.so` now contains the
+generated entrypoint code for `default.xex`, the ReXGlue `ReXApp` host, the
+Xenos GPU plugin and the coroutine bridge:
 
 ```
 MainActivity -> GameActivity (SDLActivity) -> libmain.so
-  -> ReXGlue WindowedApp -> SDL3 window -> VulkanPresenter
-  -> VK_KHR_android_surface -> cleared swapchain
+  -> ReXApp -> Runtime -> KernelState -> recompiled default.xex
+  -> rex::ui::Window + librexgpu-xenos.so -> VulkanPresenter
 ```
 
-The app presents a black (cleared) swapchain and logs paint requests every two
-seconds. The launcher can pick a game folder or use `/sdcard/cod3`, verifies
+The 15 mission modules are not linked yet; only the entrypoint boots. On-device
+boot is not verified: no Android device was attached while this build was made.
+The launcher can pick a game folder or use `/sdcard/cod3`, verifies
 `default.xex`, and adds a touch overlay on top of the SDL surface.
 
 Logs go to one file:
@@ -43,8 +44,20 @@ testing.
 
 ## Build
 
+The guest code is generated from the user's own disc and is not in the
+repository. Generate it once, outside the checkout:
+
 ```powershell
-cd C:\Users\runneradmin\Downloads\project-1944-android
+$env:COD3_GENERATED_DIR = 'D:/cod3-gen/generated'
+$rexglue = 'D:\tools\sdk\extract\win-amd64\bin\rexglue.exe'
+& $rexglue codegen D:\cod3-gen\cod3_pc_manifest.toml --target blkbrn
+# ... one --target run per mission module; the entrypoint is always included
+```
+
+Then build the APK with the same environment variable set:
+
+```powershell
+cd C:\Users\runneradmin\Downloads\cod3-android
 .\android\patches\apply-sdk-patch.ps1   # fresh submodule only
 .\android\scripts\build-debug.ps1
 ```
@@ -77,10 +90,9 @@ adb install -r android\app\build\outputs\apk\debug\app-debug.apk
 adb shell am start -n com.project1944.cod3/.MainActivity
 ```
 
-Expected: launcher UI with status chips and game-data card, then a black screen
-with the touch overlay, and logcat lines tagged `project1944` with the SDL video
-driver, the selected Vulkan device and `paint requests/s`. The same lines are in
-`logfile.txt`.
+Expected: launcher UI with status chips and game-data card, then the guest boot
+log, and logcat lines tagged `project1944` with the SDL video driver and the
+selected Vulkan device. The same lines are in `logfile.txt`.
 
 ## ReXGlue SDK patch
 
@@ -111,7 +123,7 @@ android/
       ...                   # official SDL3 Android Java glue (zlib)
     src/main/cpp/
       CMakeLists.txt
-      src/main.cpp          # WindowedApp + Vulkan presenter, paint loop
+      src/main.cpp          # ReXApp host: paths, logging, guest boot
   patches/
     rexglue-android.patch
     apply-sdk-patch.ps1
@@ -129,6 +141,7 @@ android/
 - **M1** — platform glue: game folder picker, `content://`, GPU plugin loading,
   input, audio. *(launcher, logging, picker and overlay scaffold done)*
 - **M2** — boot the recompiled guest and load the 15 mission modules.
+  *(entrypoint compiled and packaged; on-device boot unverified; modules pending)*
 - **M3** — first rendered frame from the game.
 - **M4** — touch controls, controller, audio, save/load.
 - **M5** — performance, stability, signed release build.

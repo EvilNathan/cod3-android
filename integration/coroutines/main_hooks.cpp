@@ -2,10 +2,13 @@
 #include "cod3_coroutines.h"
 #include <rex/hook.h>
 #include <rex/logging.h>
+#include <rex/platform.h>
 #include <rex/system/user_module.h>
 #include <rex/system/xex_module.h>
 #include <rex/system/xthread.h>
+#if REX_PLATFORM_WIN32
 #include <windows.h>
+#endif
 
 REX_EXTERN(__imp__sub_824A6150);
 REX_EXTERN(__imp__sub_823C0B98);
@@ -26,6 +29,7 @@ void CompleteReturnedClosure(uint32_t node, PPCContext& ctx, uint8_t* base) {
   ctx.r4.u64 = 3;
   sub_820A4028(ctx, base);
 }
+#if REX_PLATFORM_WIN32
 PPCFunc* OriginalUnload() {
   for (const auto* name : {L"rexruntimerd.dll", L"rexruntime.dll", L"rexruntimed.dll"}) {
     if (auto library = GetModuleHandleW(name)) {
@@ -36,6 +40,7 @@ PPCFunc* OriginalUnload() {
   }
   throw std::runtime_error("Original ReXGlue XexUnloadImage export is unavailable");
 }
+#endif
 rex::thread::Fiber* SchedulerRoot() {
   // XThread::Execute converts the host thread once and owns this root for the
   // lifetime of the guest thread. Passing the owner handle lets the bridge
@@ -64,6 +69,7 @@ REX_HOOK_RAW(sub_824A5D70) {
   cod3::coroutines::Destroy(ctx.r4.u32);
   __imp__sub_824A5D70(ctx, base);
 }
+#if REX_PLATFORM_WIN32
 REX_HOOK_RAW(__imp__XexUnloadImage) {
   uint32_t module_base = 0;
   {
@@ -88,6 +94,10 @@ REX_HOOK_RAW(__imp__XexUnloadImage) {
   static auto* original = OriginalUnload();
   original(ctx, base);
 }
+#endif
+// ponytail: the module-unload hook above is Windows-only for now. Parked
+// coroutines are not cancelled before a mission DLL unloads, so the end of a
+// mission can crash on Android; restore the hook once boot and menus work.
 
 // The no-argument mid-ASM hook gets the exact current context from ResumeScope.
 // The game has already performed its asymmetric 400-byte restore at this site.

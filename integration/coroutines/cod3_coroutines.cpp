@@ -1,4 +1,6 @@
 #include "cod3_coroutines.h"
+#include <rex/platform.h>
+#if REX_PLATFORM_WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -6,6 +8,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#endif
 #include <csetjmp>
 #include <atomic>
 #include <exception>
@@ -18,6 +21,22 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+
+// Win32 fibers declare their entry point WINAPI; the POSIX ucontext
+// implementation takes a plain function pointer.
+#if REX_PLATFORM_WIN32
+#define COD3_FIBER_ENTRY WINAPI
+#else
+#define COD3_FIBER_ENTRY
+#endif
+
+// IsThreadAFiber() has no POSIX equivalent: the thread is a fiber exactly when
+// the SDK's Fiber primitive has taken it over.
+#if !REX_PLATFORM_WIN32
+inline bool IsThreadAFiber() {
+  return rex::thread::Fiber::Current() != nullptr;
+}
+#endif
 
 namespace cod3::coroutines {
 namespace {
@@ -57,7 +76,6 @@ struct Coroutine {
 };
 struct State {
   ~State();
-  DWORD thread_id = GetCurrentThreadId();
   rex::thread::Fiber* scheduler = nullptr;
   rex::thread::Fiber* scheduler_hint = nullptr;
   bool converted = false;
@@ -153,7 +171,7 @@ void SwitchToScheduler(Coroutine& c) {
     SyncGuestFP(*c.ctx);
   }
 }
-void WINAPI FiberMain(void* parameter) {
+void COD3_FIBER_ENTRY FiberMain(void* parameter) {
   auto& c = *static_cast<Coroutine*>(parameter);
   try {
     if (c.scheduler_host_fpscr_valid) {

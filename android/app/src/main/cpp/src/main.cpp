@@ -1,9 +1,9 @@
 /**
  * Project 1944 - Android native entry point.
  *
- * M0b: drives the ReXGlue WindowedApp lifecycle on SDLActivity's native
- * thread. The app opens an SDL3 window, creates the Vulkan provider and
- * presenter, and presents continuously through VK_KHR_android_surface.
+ * M2: boots the recompiled Call of Duty 3 guest on SDLActivity's native
+ * thread. The ReXGlue runtime mounts the user-selected game folder, loads
+ * default.xex, and runs the recompiled guest code inside libmain.so.
  *
  * @added Project 1944 Android port, 2026
  */
@@ -15,31 +15,28 @@
 #include <dlfcn.h>
 #include <jni.h>
 
-#include <atomic>
-#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <memory>
 #include <mutex>
 #include <string>
-#include <thread>
 #include <utility>
 
 #include <rex/cvar.h>
 #include <rex/logging.h>
 #include <rex/main_android.h>
 #include <rex/platform.h>
-#include <rex/ui/vulkan/presenter.h>
-#include <rex/ui/vulkan/provider.h>
-#include <rex/ui/window_sdl.h>
+#include <rex/rex_app.h>
 #include <rex/ui/windowed_app.h>
 #include <rex/ui/windowed_app_context_sdl.h>
+
+#include "cod3_pc_init.h"
 
 #if REX_PLATFORM_ANDROID
 
 namespace {
 
-constexpr char kAppIdentifier[] = "project1944";
+constexpr char kAppIdentifier[] = "cod3_pc";
 constexpr char kLogTag[] = "project1944";
 
 #define ALOGE(...) __android_log_print(ANDROID_LOG_ERROR, kLogTag, __VA_ARGS__)
@@ -85,86 +82,42 @@ JavaVM* QueryJavaVm() {
   return nullptr;
 }
 
-class Project1944App final : public rex::ui::WindowedApp {
+// Boots the recompiled guest. ReXGlue owns the window, the Vulkan presenter
+// and the Xenos GPU plugin; the Android layer only supplies paths.
+class Cod3AndroidApp final : public rex::ReXApp {
  public:
-  explicit Project1944App(rex::ui::WindowedAppContext& app_context)
-      : WindowedApp(app_context, kAppIdentifier) {}
-  ~Project1944App() override = default;
+  using rex::ReXApp::ReXApp;
 
-  bool OnInitialize() override {
-    window_ = std::make_unique<rex::ui::WindowSDL>(app_context(), "Project 1944", 1280, 720);
-    if (!window_->Open()) {
-      REXLOG_ERROR("Project1944App: window could not be opened");
-      return false;
-    }
-
-    provider_ = rex::ui::vulkan::VulkanProvider::Create(false, true);
-    if (!provider_) {
-      REXLOG_ERROR("Project1944App: Vulkan provider creation failed");
-      return false;
-    }
-
-    presenter_ = provider_->CreatePresenter();
-    if (!presenter_) {
-      REXLOG_ERROR("Project1944App: Vulkan presenter creation failed");
-      return false;
-    }
-
-    window_->SetPresenter(presenter_.get());
-
-    paint_thread_ = std::thread([this]() { PaintLoop(); });
-    REXLOG_INFO("Project1944App: initialized, presenting");
-    return true;
+  static std::unique_ptr<rex::ui::WindowedApp> Create(
+      rex::ui::WindowedAppContext& app_context) {
+    return std::unique_ptr<Cod3AndroidApp>(
+        new Cod3AndroidApp(app_context, "cod3_pc", PPCImageConfig));
   }
 
- protected:
-  void OnDestroy() override {
-    paint_stop_.store(true, std::memory_order_release);
-    if (paint_thread_.joinable()) {
-      paint_thread_.join();
-    }
-    if (window_) {
-      window_->SetPresenter(nullptr);
-    }
-    presenter_.reset();
-    window_.reset();
-    provider_.reset();
+  void OnPreSetup(rex::RuntimeConfig& config) override {
+    // The SDK default is empty (headless). Android always wants the Xenos
+    // Vulkan plugin, packaged next to libmain.so.
+    config.gpu_plugin = "xenos";
   }
 
- private:
-  void PaintLoop() {
-    using clock = std::chrono::steady_clock;
-    const auto start = clock::now();
-    auto second_mark = start;
-    uint32_t frames = 0;
-    while (!paint_stop_.load(std::memory_order_acquire)) {
-      if (window_) {
-        window_->RequestPaint();
-      }
-      ++frames;
-      const auto now = clock::now();
-      if (now - second_mark >= std::chrono::seconds(2)) {
-        const double seconds = std::chrono::duration<double>(now - second_mark).count();
-        REXLOG_INFO("Project1944App: {:.1f} paint requests/s", frames / seconds);
-        frames = 0;
-        second_mark = now;
-      }
-      std::this_thread::sleep_for(std::chrono::milliseconds(16));
+  void OnConfigurePaths(rex::PathConfig& paths) override {
+    const auto [log_file, game_data] = GetHostPaths();
+    if (!game_data.empty()) {
+      paths.game_data_root = game_data;
     }
-    (void)start;
+    // Keep saves, shader caches and config inside the app's external files
+    // directory, next to logfile.txt.
+    if (!log_file.empty()) {
+      const auto user_root =
+          std::filesystem::path(log_file).parent_path() / "data";
+      paths.user_data_root = user_root;
+      paths.update_data_root.clear();
+      paths.cache_root = user_root / "cache";
+      paths.metadata_root = user_root / "metadata";
+      paths.config_path = user_root / "cod3_pc.toml";
+    }
   }
-
-  std::unique_ptr<rex::ui::WindowSDL> window_;
-  std::unique_ptr<rex::ui::vulkan::VulkanProvider> provider_;
-  std::unique_ptr<rex::ui::Presenter> presenter_;
-  std::thread paint_thread_;
-  std::atomic<bool> paint_stop_{false};
 };
-
-std::unique_ptr<rex::ui::WindowedApp> CreateProject1944App(
-    rex::ui::WindowedAppContext& app_context) {
-  return std::make_unique<Project1944App>(app_context);
-}
 
 int RunAndroidApp(int argc, char** argv) {
   const std::string lib_dir = QueryNativeLibraryDir();
@@ -209,12 +162,14 @@ int RunAndroidApp(int argc, char** argv) {
               log_file);
   REXLOG_INFO("android_main: game data dir={}", game_data);
 
-  if (!game_data.empty()) {
+  if (game_data.empty()) {
+    REXLOG_ERROR("android_main: no game data directory selected");
+  } else {
     const auto xex = std::filesystem::path(game_data) / "default.xex";
     std::error_code ec;
     const auto size = std::filesystem::file_size(xex, ec);
     if (ec) {
-      REXLOG_WARN("android_main: default.xex missing in {}", game_data);
+      REXLOG_ERROR("android_main: default.xex missing in {}", game_data);
     } else {
       REXLOG_INFO("android_main: default.xex found ({} bytes)", size);
     }
@@ -271,7 +226,7 @@ Java_com_project1944_cod3_GameActivity_nativeSetPaths(JNIEnv* env, jclass, jstri
   SetHostPaths(to_string(log_file), to_string(game_data));
 }
 
-REX_DEFINE_APP(project1944, CreateProject1944App);
+REX_DEFINE_APP(cod3_pc, Cod3AndroidApp::Create);
 
 int main(int argc, char* argv[]) {
   return RunAndroidApp(argc, argv);
