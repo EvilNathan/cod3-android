@@ -51,8 +51,32 @@ add_subdirectory("${REXSDK_DIR}" rexglue EXCLUDE_FROM_ALL)
 # contain it, so each host application compiles it into its own image.
 set(COD3_COROUTINE_DIR "${REX_PROJECT_ROOT}/integration/coroutines")
 
+# Every mission DLL is recompiled into its own shared library and loaded by the
+# guest loader on demand. The coroutine bridge is shared by all of them, so it
+# is a library and not a copy inside each image: the scheduler state must be
+# one instance per process.
+set(COD3_MODULES
+    blkbrn chambois credits crssrds falaise forest fuelplnt hostage
+    island laison mace2 mayenne nightd saint_lo stbert
+)
+
+add_library(cod3_coroutines SHARED
+    "${COD3_COROUTINE_DIR}/cod3_coroutines.cpp"
+)
+target_include_directories(cod3_coroutines PUBLIC "${COD3_COROUTINE_DIR}")
+target_link_libraries(cod3_coroutines PUBLIC rex::runtime)
+target_compile_options(cod3_coroutines PRIVATE
+    -ffp-model=strict -fno-strict-aliasing -fwrapv)
+
+# capture_targets.cmake calls this for each verified mission capture site.
+function(cod3_attach_capture_hooks target_name source_file)
+    target_sources(${target_name} PRIVATE "${source_file}")
+    target_link_libraries(${target_name} PRIVATE cod3_coroutines)
+endfunction()
+
 add_library(main SHARED
     src/main.cpp
+    src/module_registry.cpp
     "${REXSDK_DIR}/src/ui/rex_app.cpp"
 )
 
@@ -60,9 +84,14 @@ add_library(main SHARED
 # are architecture-neutral C++; this target compiles them for arm64-v8a.
 if(EXISTS "${COD3_GENERATED_DIR}/default/sources.cmake")
     include("${COD3_GENERATED_DIR}/default/sources.cmake")
+    # The full registry is owned by the app so all 15 missions are registered
+    # regardless of which module target the last codegen run emitted.
+    list(REMOVE_ITEM GENERATED_SOURCES
+        "${COD3_GENERATED_DIR}/default/module_registry.cpp")
     add_library(cod3_default OBJECT ${GENERATED_SOURCES})
     target_include_directories(cod3_default PRIVATE
         "${COD3_GENERATED_DIR}/default"
+        "${COD3_COROUTINE_DIR}"
     )
     target_link_libraries(cod3_default PRIVATE rex::runtime)
     target_precompile_headers(cod3_default PRIVATE
@@ -74,7 +103,6 @@ if(EXISTS "${COD3_GENERATED_DIR}/default/sources.cmake")
     # Coroutine bridge: the generated scheduler calls into it, and the custom
     # PCH interposes setjmp/longjmp, so it must live in the same image.
     target_sources(main PRIVATE
-        "${COD3_COROUTINE_DIR}/cod3_coroutines.cpp"
         "${COD3_COROUTINE_DIR}/main_hooks.cpp"
     )
     target_include_directories(main PRIVATE
@@ -89,6 +117,38 @@ if(EXISTS "${COD3_GENERATED_DIR}/default/sources.cmake")
         target_compile_options(${_cod3_target} PRIVATE
             -ffp-model=strict -fno-strict-aliasing -fwrapv)
     endforeach()
+
+    foreach(_cod3_module IN LISTS COD3_MODULES)
+        set(_cod3_module_dir "${COD3_GENERATED_DIR}/${_cod3_module}")
+        if(NOT EXISTS "${_cod3_module_dir}/sources.cmake")
+            message(STATUS "COD3 module skipped (not generated): ${_cod3_module}")
+            continue()
+        endif()
+        include("${_cod3_module_dir}/sources.cmake")
+        set(_cod3_module_sources ${GENERATED_SOURCES})
+        unset(GENERATED_SOURCES)
+        add_library(cod3_pc_${_cod3_module} SHARED ${_cod3_module_sources})
+        target_include_directories(cod3_pc_${_cod3_module} PRIVATE
+            "${_cod3_module_dir}"
+            "${COD3_COROUTINE_DIR}"
+        )
+        target_link_libraries(cod3_pc_${_cod3_module} PRIVATE rex::runtime)
+        target_precompile_headers(cod3_pc_${_cod3_module} PRIVATE
+            "${_cod3_module_dir}/cod3_pc_pch.h")
+        target_compile_options(cod3_pc_${_cod3_module} PRIVATE
+            -ffp-model=strict -fno-strict-aliasing -fwrapv)
+        # The host dlopen()s the module by its bare library name.
+        rexglue_configure_module_target(cod3_pc_${_cod3_module} HOST main)
+        message(STATUS "COD3 module: ${_cod3_module}")
+    endforeach()
+
+    if(EXISTS "${COD3_COROUTINE_DIR}/generated/capture_targets.cmake")
+        include("${COD3_COROUTINE_DIR}/generated/capture_targets.cmake")
+    else()
+        message(WARNING
+            "Coroutine capture hooks are missing. Run "
+            "integration/coroutines/Prepare-FromGame.ps1 before configuring.")
+    endif()
 else()
     message(WARNING
         "No generated guest code at ${COD3_GENERATED_DIR}/default. "
@@ -108,6 +168,7 @@ target_compile_options(main PRIVATE
 # rex::ui is an OBJECT library: its objects are embedded into libmain.so.
 # rex::runtime is shared and is packaged alongside libmain.so by Gradle.
 target_link_libraries(main PRIVATE
+    cod3_coroutines
     rex::ui
     rex::runtime
     SDL3::SDL3

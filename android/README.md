@@ -5,20 +5,27 @@ roadmap and credits are in the [root README](../README.md).
 
 ## Status
 
-**M2a — recompiled guest wired into the APK.** `libmain.so` now contains the
-generated entrypoint code for `default.xex`, the ReXGlue `ReXApp` host, the
-Xenos GPU plugin and the coroutine bridge:
+**M3 — 15 mission modules built and registered.** The APK now carries one
+shared library per mission DLL, next to the entrypoint image:
 
 ```
 MainActivity -> GameActivity (SDLActivity) -> libmain.so
   -> ReXApp -> Runtime -> KernelState -> recompiled default.xex
+  -> cod3::coroutines <- libcod3_coroutines.so
+  -> sp/<mission>/<mission>.dll -> libcod3_pc_<mission>.so (dlopen)
   -> rex::ui::Window + librexgpu-xenos.so -> VulkanPresenter
 ```
 
-The 15 mission modules are not linked yet; only the entrypoint boots. On-device
-boot is not verified: no Android device was attached while this build was made.
-The launcher can pick a game folder or use `/sdcard/cod3`, verifies
-`default.xex`, and adds a touch overlay on top of the SDL surface.
+`libmain.so` contains the entrypoint code, the ReXApp host and the scheduler
+hooks. `libcod3_coroutines.so` holds the fiber bridge once per process. The
+registry in `src/module_registry.cpp` maps every guest mission path to its
+shared library, so the guest loader's `LoadUserModule` finds the recompiled
+code. The 45 capture wrappers come from `Prepare-FromGame.ps1`.
+
+On-device boot and module loading are not verified: no Android device was
+attached while this build was made. The launcher can pick a game folder or use
+`/sdcard/cod3`, verifies `default.xex`, and adds a touch overlay on top of the
+SDL surface.
 
 Logs go to two files in the app external files folder:
 
@@ -64,14 +71,33 @@ invisible to the app.
 ## Build
 
 The guest code is generated from the user's own disc and is not in the
-repository. Generate it once, outside the checkout:
+repository. The coroutine step must run before the first code generation: it
+writes the PCH overlay that codegen picks up, and without it the rebuilt
+scheduler silently loses its setjmp/longjmp interception.
+
+```powershell
+cd C:\Users\runneradmin\Downloads\cod3-android
+# Prepare-FromGame.ps1 reads game/cod3/... ; point it at the extracted disc.
+New-Item -ItemType Junction -Path game\cod3 -Target D:\cod3-game
+.\integration\coroutines\Prepare-FromGame.ps1
+```
+
+Then generate the entrypoint and every mission module:
 
 ```powershell
 $env:COD3_GENERATED_DIR = 'D:/cod3-gen/generated'
 $rexglue = 'D:\tools\sdk\extract\win-amd64\bin\rexglue.exe'
-& $rexglue codegen D:\cod3-gen\cod3_pc_manifest.toml --target blkbrn
-# ... one --target run per mission module; the entrypoint is always included
+$modules = 'blkbrn','chambois','credits','crssrds','falaise','forest',
+  'fuelplnt','hostage','island','laison','mace2','mayenne','nightd',
+  'saint_lo','stbert'
+foreach ($m in $modules) {
+    & $rexglue codegen D:\cod3-gen\cod3_pc_manifest.toml --target $m
+}
 ```
+
+Run one `--target` per invocation. A single all-target run fails analysis in
+this build; per-target runs succeed and the app owns the complete module
+registry, so the last run overwriting the generated one is harmless.
 
 Then build the APK with the same environment variable set:
 
@@ -149,6 +175,7 @@ android/
     src/main/cpp/
       CMakeLists.txt
       src/main.cpp          # ReXApp host: paths, logging, guest boot
+      src/module_registry.cpp  # guest mission path -> recompiled shared library
   patches/
     rexglue-android.patch
     apply-sdk-patch.ps1
@@ -166,9 +193,10 @@ android/
 - **M1** — platform glue: game folder picker, `content://`, GPU plugin loading,
   input, audio. *(launcher, logging, picker and overlay scaffold done)*
 - **M2** — boot the recompiled guest and load the 15 mission modules.
-  *(entrypoint compiled and packaged; on-device boot unverified; modules pending;
-  M2a relaxes the Vulkan device requirements for mobile GPUs)*
-- **M3** — first rendered frame from the game.
+  *(entrypoint and all 15 modules built; capture hooks wired; on-device boot
+  and module load unverified)*
+- **M2a** — relax the Vulkan device requirements for mobile GPUs. *(done)*
+- **M3** — first rendered frame from the game. *(pending; needs an on-device run)*
 - **M4** — touch controls, controller, audio, save/load.
 - **M5** — performance, stability, signed release build.
 
