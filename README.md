@@ -252,9 +252,6 @@ reproduces the APK build.
 
 ```powershell
 git submodule update --init --recursive --depth 1 tools/rexglue-source
-git -C tools/rexglue-source submodule update --init --depth 1 `
-    thirdparty/sdl3 thirdparty/vulkan-headers thirdparty/vulkan-memory-allocator `
-    thirdparty/spirv-headers thirdparty/spirv-tools thirdparty/glslang
 .\android\patches\apply-sdk-patch.ps1
 ```
 

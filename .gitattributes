@@ -5,6 +5,7 @@
 *.bat text eol=crlf
 *.cs text eol=crlf
 *.sh text eol=lf
+*.patch text eol=lf
 *.png binary
 *.jpg binary
 *.jpeg binary
