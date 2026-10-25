@@ -5,7 +5,7 @@ roadmap and credits are in the [root README](../README.md).
 
 ## Status
 
-**M2 — recompiled guest wired into the APK.** `libmain.so` now contains the
+**M2a — recompiled guest wired into the APK.** `libmain.so` now contains the
 generated entrypoint code for `default.xex`, the ReXGlue `ReXApp` host, the
 Xenos GPU plugin and the coroutine bridge:
 
@@ -20,14 +20,33 @@ boot is not verified: no Android device was attached while this build was made.
 The launcher can pick a game folder or use `/sdcard/cod3`, verifies
 `default.xex`, and adds a touch overlay on top of the SDL surface.
 
-Logs go to one file:
+Logs go to two files in the app external files folder:
 
 ```
-/sdcard/Android/data/com.project1944.cod3/files/logfile.txt
+logfile.txt       # launcher and Java lines
+native-log.txt    # ReXGlue runtime, Vulkan and guest lines
 ```
 
-The launcher footer shows the path; tap it to copy. `adb pull` that file after
-testing.
+The split is deliberate: the SDK file sink opens its file with truncation, so
+sharing one path with the Java appender corrupted both files.
+
+The launcher footer shows the Java path; tap it to copy. `adb pull` both files
+after testing. Native lines also appear in logcat under the `project1944` tag.
+
+## Game data
+
+The APK cannot read an ISO. Extract the disc image and put the contents
+directly in the game folder:
+
+```
+/sdcard/cod3/default.xex
+/sdcard/cod3/sp/...
+```
+
+`default.xex` must be in the folder root. This device has no
+`OPEN_DOCUMENT_TREE` handler, so the system folder picker is unavailable: use
+`USE /sdcard/cod3` and grant All-files access, otherwise the folder stays
+invisible to the app.
 
 ## Requirements
 
@@ -92,7 +111,13 @@ adb shell am start -n com.project1944.cod3/.MainActivity
 
 Expected: launcher UI with status chips and game-data card, then the guest boot
 log, and logcat lines tagged `project1944` with the SDL video driver and the
-selected Vulkan device. The same lines are in `logfile.txt`.
+selected Vulkan device.
+
+Mobile GPUs omit optional Vulkan features that the desktop device selector
+requires. The Android host clears `vulkan_require_vertex_pipeline_stores_and_atomics`,
+`vulkan_require_geometry_shader` and `vulkan_require_fill_mode_non_solid` in
+`OnPreSetup`. Without `vertexPipelineStoresAndAtomics`, vertex-stage memexport
+draws are skipped and the GPU logs a warning instead of refusing the device.
 
 ## ReXGlue SDK patch
 
@@ -141,7 +166,8 @@ android/
 - **M1** — platform glue: game folder picker, `content://`, GPU plugin loading,
   input, audio. *(launcher, logging, picker and overlay scaffold done)*
 - **M2** — boot the recompiled guest and load the 15 mission modules.
-  *(entrypoint compiled and packaged; on-device boot unverified; modules pending)*
+  *(entrypoint compiled and packaged; on-device boot unverified; modules pending;
+  M2a relaxes the Vulkan device requirements for mobile GPUs)*
 - **M3** — first rendered frame from the game.
 - **M4** — touch controls, controller, audio, save/load.
 - **M5** — performance, stability, signed release build.
