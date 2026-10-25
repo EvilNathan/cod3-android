@@ -98,6 +98,15 @@ class Cod3AndroidApp final : public rex::ReXApp {
     // The SDK default is empty (headless). Android always wants the Xenos
     // Vulkan plugin, packaged next to libmain.so.
     config.gpu_plugin = "xenos";
+
+    // Mobile GPUs (Mali in particular) omit optional Vulkan features that the
+    // desktop backend gates device selection on. Each one has a documented
+    // fallback; leaving the requirements on rejects the only device and the
+    // app exits before the guest starts.
+    rex::cvar::SetFlagByName(
+        "vulkan_require_vertex_pipeline_stores_and_atomics", "false");
+    rex::cvar::SetFlagByName("vulkan_require_geometry_shader", "false");
+    rex::cvar::SetFlagByName("vulkan_require_fill_mode_non_solid", "false");
   }
 
   void OnConfigurePaths(rex::PathConfig& paths) override {
@@ -139,27 +148,31 @@ int RunAndroidApp(int argc, char** argv) {
   rex::cvar::ApplyEnvironment();
   rex::InitLoggingEarly();
 
-  // The Java layer owns the log location (app external files dir) so the user
-  // can pull one predictable logfile.txt. Keep logcat as the early sink.
+  // The Java launcher appends to logfile.txt; the native rotating sink opens
+  // its file with truncation, so two writers on one path corrupt both. Native
+  // lines go to native-log.txt in the same directory.
+  std::filesystem::path native_log;
   if (!log_file.empty()) {
+    native_log = std::filesystem::path(log_file).parent_path() / "native-log.txt";
     std::error_code ec;
-    std::filesystem::create_directories(
-        std::filesystem::path(log_file).parent_path(), ec);
+    std::filesystem::create_directories(native_log.parent_path(), ec);
+    // LogConfig takes a borrowed pointer; keep the string alive across init.
+    const std::string native_log_path = native_log.string();
     try {
       rex::LogConfig log_config;
-      log_config.log_file = log_file.c_str();
+      log_config.log_file = native_log_path.c_str();
       log_config.log_to_console = false;
       log_config.default_level =
           rex::ParseLogLevelOr(REXCVAR_GET(log_level), spdlog::level::info);
       log_config.flush_level = spdlog::level::info;
       rex::InitLogging(log_config);
     } catch (const std::exception& e) {
-      ALOGE("file logging unavailable (%s): %s", log_file.c_str(), e.what());
+      ALOGE("file logging unavailable (%s): %s", native_log_path.c_str(), e.what());
     }
   }
 
-  REXLOG_INFO("android_main: app={} lib_dir={} log_file={}", kAppIdentifier, lib_dir,
-              log_file);
+  REXLOG_INFO("android_main: app={} lib_dir={} java_log={} native_log={}", kAppIdentifier,
+              lib_dir, log_file, native_log.string());
   REXLOG_INFO("android_main: game data dir={}", game_data);
 
   if (game_data.empty()) {
@@ -169,7 +182,11 @@ int RunAndroidApp(int argc, char** argv) {
     std::error_code ec;
     const auto size = std::filesystem::file_size(xex, ec);
     if (ec) {
-      REXLOG_ERROR("android_main: default.xex missing in {}", game_data);
+      std::error_code dir_ec;
+      const bool exists = std::filesystem::exists(game_data, dir_ec);
+      const bool is_dir = std::filesystem::is_directory(game_data, dir_ec);
+      REXLOG_ERROR("android_main: default.xex missing in {} (dir exists={} is_dir={})",
+                   game_data, exists, is_dir);
     } else {
       REXLOG_INFO("android_main: default.xex found ({} bytes)", size);
     }

@@ -36,6 +36,7 @@ public final class GameActivity extends SDLActivity {
         Logx.i("GameActivity", "onCreate game=" + gamePath + " log=" + logPath);
         try {
             nativeSetPaths(logPath, gamePath);
+            Logx.i("GameActivity", "native runtime lines go to native-log.txt next to this file");
         } catch (UnsatisfiedLinkError e) {
             Logx.e("GameActivity", "nativeSetPaths unavailable", e);
         }

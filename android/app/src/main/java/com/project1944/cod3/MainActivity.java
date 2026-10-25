@@ -275,7 +275,7 @@ public final class MainActivity extends Activity {
                 ? "Vulkan " + vulkanVersion() : "not reported";
         String gamepad = pm.hasSystemFeature(PackageManager.FEATURE_GAMEPAD)
                 ? "detected" : "not reported (touch overlay available)";
-        String version = "0.1.0-m1a";
+        String version = "unknown";
         try {
             version = pm.getPackageInfo(getPackageName(), 0).versionName;
         } catch (Exception ignored) {
@@ -298,7 +298,7 @@ public final class MainActivity extends Activity {
 
     private View buildLaunchButton() {
         Button launch = new Button(this);
-        launch.setText("START VULKAN SMOKE TEST");
+        launch.setText("START GAME");
         launch.setAllCaps(false);
         launch.setTextSize(TypedValue.COMPLEX_UNIT_SP, 17);
         launch.setTypeface(Typeface.DEFAULT_BOLD);
@@ -338,7 +338,7 @@ public final class MainActivity extends Activity {
 
     private void launchGame() {
         if (!GameData.hasXex(GameData.resolve(this))) {
-            toast("Game data missing - starting the smoke test only.");
+            toast("Game data missing - default.xex is not readable, the guest cannot boot.");
         }
         Logx.i("MainActivity", "launching GameActivity");
         startActivity(new Intent(this, GameActivity.class));
@@ -356,9 +356,9 @@ public final class MainActivity extends Activity {
             String state;
             int color;
             if (!xex.isFile()) {
-                state = "default.xex not found. Use PICK FOLDER or copy the game to "
-                        + GameData.defaultPath() + ".";
+                state = diagnoseMissingData(path);
                 color = RED;
+                Logx.w("MainActivity", "game data: " + state.replace('\n', ' '));
             } else {
                 Logx.i("MainActivity", "hashing " + xex + " (" + xex.length() + " bytes)");
                 String sha = GameData.sha256(xex);
@@ -382,6 +382,53 @@ public final class MainActivity extends Activity {
             });
         }, "game-data-check").start();
         refreshAllFilesState();
+    }
+
+    /**
+     * Explains why default.xex is not visible. The common mistakes are putting
+     * the ISO itself in the folder instead of its extracted contents, and
+     * missing All-files access, which hides /sdcard/cod3 from the app.
+     */
+    private String diagnoseMissingData(String path) {
+        File dir = new File(path);
+        boolean allFiles = Build.VERSION.SDK_INT < Build.VERSION_CODES.R
+                || Environment.isExternalStorageManager();
+        if (!dir.exists()) {
+            return "Folder not found: " + path
+                    + (allFiles ? "" : "\nAll-files access is off, so /sdcard/cod3 is invisible.");
+        }
+        if (!dir.isDirectory()) {
+            return "Not a folder: " + path;
+        }
+        String[] names = dir.list();
+        if (names == null) {
+            return "Folder is not readable: " + path
+                    + (allFiles ? "" : "\nGrant All-files access first.");
+        }
+        int isoCount = 0;
+        StringBuilder sample = new StringBuilder();
+        for (String name : names) {
+            if (name.toLowerCase(Locale.US).endsWith(".iso")) {
+                isoCount++;
+            }
+            if (sample.length() < 80) {
+                sample.append(sample.length() == 0 ? "" : ", ").append(name);
+            }
+        }
+        StringBuilder out = new StringBuilder();
+        out.append("default.xex is missing. The folder holds ")
+                .append(names.length).append(" item(s): ").append(sample);
+        if (names.length > 0) {
+            out.append(" ...");
+        }
+        if (isoCount > 0) {
+            out.append("\nAn ISO file is present. Extract it and keep default.xex, sp/ and")
+                    .append(" the other files directly in this folder; the APK cannot read")
+                    .append(" an ISO.");
+        } else {
+            out.append("\nCopy the extracted disc contents here, not the ISO.");
+        }
+        return out.toString();
     }
 
     private void refreshAllFilesState() {
