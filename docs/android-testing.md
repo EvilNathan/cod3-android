@@ -92,6 +92,12 @@ Kirim ke pengembang: dua file di atas + potongan `logcat` saat crash.
 
 ## 5. Masalah yang diketahui
 
+- **Load misi pertama (m4e)**: setelah cutscene pembuka, game memuat modul misi
+  `sp/saint_lo/saint_lo.dll` sebagai shared library Android. Di log yang benar
+  ada baris `DynamicLibrary: resolved 'cod3_pc_saint_lo' as
+  'libcod3_pc_saint_lo.so'`. Kalau loading berhenti di situ, kirim
+  `native-log.txt`; baris `Failed to load shared library for module ...`
+  berarti modul misi gagal dimuat.
 - **Pertama kali setelah install**: build Vulkan pipeline butuh waktu; jangan
   dipaksa-close saat "Compiling shaders" (jika ada indikator).
 - **Performa** menengah-rendah: Snapdragon 8 Gen 1+ disarankan untuk 30+ fps

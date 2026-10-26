@@ -21,6 +21,7 @@
 #include <filesystem>
 #include <memory>
 #include <mutex>
+#include <span>
 #include <string>
 #include <utility>
 
@@ -136,6 +137,9 @@ class Cod3AndroidApp final : public rex::ReXApp {
   // through the VFS (host folder or disc image - the same path the guest will
   // load) and log its digest so a wrong disc revision is visible in logs.
   void OnPostSetup() override {
+    // X_STATUS_END_OF_FILE expands to (X_STATUS)0xC0000011L, which spells the
+    // type unqualified; make it visible in this scope before the comparison.
+    using rex::X_STATUS;
     rex::filesystem::VirtualFileSystem* vfs = runtime()->file_system();
     if (!vfs) {
       return;
@@ -152,15 +156,29 @@ class Cod3AndroidApp final : public rex::ReXApp {
     }
     project1944::Sha256 hasher;
     std::array<uint8_t, 64 * 1024> buffer;
+    // Entry::size() is the XEX file length on the mounted folder or disc
+    // image. Reading past it returns X_STATUS_END_OF_FILE, which must be
+    // treated as a clean end: the old read-until-failure loop reported a
+    // bogus error at the exact end of default.xex and skipped the digest.
+    const size_t total_size = entry->size();
     size_t offset = 0;
-    for (;;) {
+    bool read_failed = false;
+    while (total_size == 0 || offset < total_size) {
+      size_t chunk = buffer.size();
+      if (total_size != 0 && chunk > total_size - offset) {
+        chunk = total_size - offset;
+      }
       size_t bytes_read = 0;
-      const auto status = file->ReadSync(buffer, offset, &bytes_read);
+      const auto status = file->ReadSync(std::span<uint8_t>(buffer.data(), chunk), offset,
+                                         &bytes_read);
+      if (status == X_STATUS_END_OF_FILE) {
+        break;
+      }
       if (XFAILED(status)) {
         REXLOG_ERROR("OnPostSetup: default.xex read failed at offset {}: {:08X}", offset,
                      static_cast<uint32_t>(status));
-        file->Destroy();
-        return;
+        read_failed = true;
+        break;
       }
       if (!bytes_read) {
         break;
@@ -169,8 +187,12 @@ class Cod3AndroidApp final : public rex::ReXApp {
       offset += bytes_read;
     }
     file->Destroy();
+    if (read_failed) {
+      return;
+    }
     const std::string digest = hasher.hexdigest();
-    REXLOG_INFO("OnPostSetup: default.xex {} bytes, SHA-256 {}", offset, digest);
+    REXLOG_INFO("OnPostSetup: default.xex {} bytes (entry size {}), SHA-256 {}", offset,
+                total_size, digest);
     if (digest != kSupportedXexSha256) {
       REXLOG_WARN(
           "OnPostSetup: default.xex SHA-256 differs from the supported build "

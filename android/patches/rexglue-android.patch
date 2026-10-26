@@ -732,6 +732,82 @@ index 0000000..3de9ff7
 +}  // namespace rex::filesystem
 +
 +#endif  // REX_PLATFORM_ANDROID
+diff --git a/src/core/dynlib_posix.cpp b/src/core/dynlib_posix.cpp
+index fcfd6c9..b28755f 100644
+--- a/src/core/dynlib_posix.cpp
++++ b/src/core/dynlib_posix.cpp
+@@ -1,12 +1,55 @@
++#include <rex/filesystem.h>
++#include <rex/logging.h>
+ #include <rex/platform.h>
+ #include <rex/platform/dynlib.h>
+ 
+-static_assert(REX_PLATFORM_LINUX || REX_PLATFORM_MAC, "This file is POSIX-only");
++static_assert(REX_PLATFORM_LINUX || REX_PLATFORM_MAC || REX_PLATFORM_ANDROID,
++              "This file is POSIX-only");
+ 
+ #include <dlfcn.h>
+ 
++#include <string>
++
+ namespace rex::platform {
+ 
++namespace {
++
++#if REX_PLATFORM_ANDROID
++// Android's dlopen() resolves sonames such as "libfoo.so" through the app's
++// native-library namespace, but the recompiled guest modules are registered by
++// bare name ("cod3_pc_saint_lo") because Windows' LoadLibrary() appends the
++// platform prefix/suffix itself. Mirror that behaviour here: first try the
++// name as given, then the Android soname, then an absolute path inside
++// ApplicationInfo.nativeLibraryDir (which the host supplies during startup).
++void* OpenAndroidLibrary(const std::filesystem::path& path, int flags) {
++  void* handle = dlopen(path.c_str(), flags);
++  if (handle) {
++    return handle;
++  }
++  if (!path.has_filename() || path.has_parent_path() || !path.extension().empty()) {
++    return nullptr;
++  }
++  const std::string soname = "lib" + path.filename().string() + ".so";
++  handle = dlopen(soname.c_str(), flags);
++  if (handle) {
++    REXLOG_INFO("DynamicLibrary: resolved '{}' as '{}'", path.string(), soname);
++    return handle;
++  }
++  const std::filesystem::path native_dir = rex::filesystem::GetExecutableFolder();
++  if (native_dir.empty()) {
++    return nullptr;
++  }
++  const std::filesystem::path absolute = native_dir / std::filesystem::path(soname);
++  handle = dlopen(absolute.c_str(), flags);
++  if (handle) {
++    REXLOG_INFO("DynamicLibrary: resolved '{}' as '{}'", path.string(), absolute.string());
++  }
++  return handle;
++}
++#endif
++
++}  // namespace
++
+ DynamicLibrary::~DynamicLibrary() {
+   Close();
+ }
+@@ -27,7 +70,14 @@ DynamicLibrary& DynamicLibrary::operator=(DynamicLibrary&& other) noexcept {
+ bool DynamicLibrary::Load(const std::filesystem::path& path, SymbolResolution mode) {
+   Close();
+   int flags = (mode == SymbolResolution::kImmediate) ? RTLD_NOW : RTLD_LAZY;
++#if REX_PLATFORM_ANDROID
++  handle_ = OpenAndroidLibrary(path, flags);
++#else
+   handle_ = dlopen(path.c_str(), flags);
++#endif
++  if (!handle_) {
++    REXLOG_ERROR("DynamicLibrary: unable to load '{}': {}", path.string(), dlerror());
++  }
+   return handle_ != nullptr;
+ }
+ 
 diff --git a/src/core/fiber_posix.cpp b/src/core/fiber_posix.cpp
 index 4fe1ca6..9c4e89b 100644
 --- a/src/core/fiber_posix.cpp
