@@ -69,6 +69,28 @@ final class GameData {
         }
     }
 
+    /** Queries a SAF document's display name (fallback to "disc.iso"). */
+    static String queryDisplayName(Context context, Uri docUri) {
+        try (android.database.Cursor cursor = context.getContentResolver()
+                .query(docUri, new String[] {
+                        android.provider.OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+            if (cursor != null && cursor.moveToFirst()) {
+                int index = cursor.getColumnIndex(
+                        android.provider.OpenableColumns.DISPLAY_NAME);
+                if (index >= 0 && !cursor.isNull(index)) {
+                    String name = cursor.getString(index);
+                    if (name != null && !name.isEmpty()) {
+                        return name;
+                    }
+                }
+            }
+        } catch (Exception e) {
+            Logx.w("GameData", "display name query failed for " + docUri
+                    + ": " + e.getMessage());
+        }
+        return "disc.iso";
+    }
+
     /** Converts a SAF tree URI from the primary external volume to a real path. */
     static String treeToPath(Uri treeUri) {
         try {
@@ -84,7 +106,33 @@ final class GameData {
     }
 
     /** Converts a SAF single-document URI (e.g. a picked .iso) to a real path. */
-    static String documentToPath(Uri docUri) {
+    static String documentToPath(Context context, Uri docUri) {
+        String path = documentToPathImpl(context, docUri);
+        if (path != null) {
+            return path;
+        }
+        // Fallback: many providers (Downloads on Android 15, Files by Google,
+        // third-party managers) expose the real path through the legacy _data
+        // column even when the authority is not externalstorage.
+        try (android.database.Cursor cursor = context.getContentResolver()
+                .query(docUri, new String[] {"_data"}, null, null, null)) {
+            if (cursor != null && cursor.moveToFirst()) {
+                int index = cursor.getColumnIndex("_data");
+                if (index >= 0 && !cursor.isNull(index)) {
+                    String data = cursor.getString(index);
+                    if (data != null && !data.isEmpty() && new File(data).isFile()) {
+                        Logx.i("GameData", "_data fallback resolved " + docUri + " -> " + data);
+                        return data;
+                    }
+                }
+            }
+        } catch (Exception e) {
+            Logx.w("GameData", "_data fallback failed for " + docUri + ": " + e.getMessage());
+        }
+        return null;
+    }
+
+    private static String documentToPathImpl(Context context, Uri docUri) {
         try {
             if (!"com.android.externalstorage.documents".equals(docUri.getAuthority())) {
                 return null;

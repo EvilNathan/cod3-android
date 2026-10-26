@@ -10,10 +10,13 @@ Status: **M3/M4 — boot, render, input sentuh + gamepad, audio, save/load.**
 ## 1. Persiapan sekali saja
 
 1. **Data game** — dua opsi:
-   - **ISO langsung (disarankan)**: taruh `Call of Duty 3.iso` di memori
-     internal, mis. `/sdcard/Call of Duty 3.iso`, lalu di app tekan
-     **PICK ISO** dan pilih file itu. **Tidak perlu ekstrak** — game boot
-     langsung dari disc image (di-mount read-only via GDFX/XISO di native).
+   - **ISO langsung (disarankan)**: taruh `Call of Duty 3.iso` di mana saja
+     di memori internal, mis. `/sdcard/Download/`. Di app tekan **PICK ISO** —
+     muncul browser in-app yang memindai storage langsung (tanpa picker
+     sistem, jadi tidak kena bug Android 15) — lalu tap file yang ditemukan.
+     **Tidak perlu ekstrak**: game boot langsung dari disc image (di-mount
+     read-only via GDFX/XISO di native). Kalau list kosong, pastikan izin
+     Semua File aktif lalu tekan **SCAN AGAIN**.
    - **Folder terekstrak**: `/sdcard/cod3/default.xex` + `sp/…` + `config/…`
      (hasil ekstrak ISO sebelumnya juga tetap didukung).
    (Saat HP terhubung via USB/ADB, script `D:\stage\deploy-device.ps1` bisa
