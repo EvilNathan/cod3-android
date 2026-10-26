@@ -5,7 +5,9 @@ import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.RectF;
 import android.graphics.Typeface;
+import android.os.SystemClock;
 import android.util.SparseArray;
+import android.view.HapticFeedbackConstants;
 import android.view.MotionEvent;
 import android.view.View;
 
@@ -19,8 +21,14 @@ import java.util.List;
  * Back/Start. Everything is driven through one SDL virtual joystick in native
  * code (touch_pad.cpp); ReXGlue's SDL input driver turns it into XInput state.
  *
- * Touches that do not start on a control return false so they still reach the
- * SDL SurfaceView underneath.
+ * Any touch that does not land on a button or a visible stick becomes a direct
+ * look drag: an invisible stick anchored where the finger went down, so the
+ * camera turns by swiping the screen instead of hunting for the right stick.
+ * A short tap in that area is translated to A (confirm in menus, jump in
+ * play), mirroring the reference touch layer in Black-Android.
+ *
+ * The whole view consumes the gesture. The game does not need raw touch
+ * events: every input is forwarded through the virtual pad.
  */
 final class TouchOverlay extends View {
     // SDL_GAMEPAD_BUTTON_* indices; -1 means "use sdAxis instead".
@@ -33,6 +41,10 @@ final class TouchOverlay extends View {
     private static final int BTN_L1 = 9;
     private static final int BTN_R1 = 10;
     // SDL axis indices of the virtual pad (touch_pad.cpp): 0..3 sticks, 4/5 triggers.
+    private static final int AXIS_LX = 0;
+    private static final int AXIS_LY = 1;
+    private static final int AXIS_RX = 2;
+    private static final int AXIS_RY = 3;
     private static final int AXIS_LT = 4;
     private static final int AXIS_RT = 5;
 
@@ -43,6 +55,7 @@ final class TouchOverlay extends View {
         final boolean round;
         final RectF bounds = new RectF();
         boolean down;
+        int presses;    // fingers currently holding this control (tap pulse not counted)
 
         PadButton(int sdButton, int sdAxis, String label, boolean round) {
             this.sdButton = sdButton;
@@ -54,6 +67,9 @@ final class TouchOverlay extends View {
 
     private static final int ACCENT = Color.rgb(232, 180, 74);
     private static final int WHITE = Color.rgb(236, 240, 244);
+    private static final long TAP_MS = 90;
+    private static final long TAP_MAX_MS = 250;
+    private static final float LOOK_DEADZONE = 0.08f;
 
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint textPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -66,6 +82,13 @@ final class TouchOverlay extends View {
     private int rightPointer = -1;
     private RectF leftStickZone;
     private RectF rightStickZone;
+
+    // Direct look: invisible stick anchored at the touch-down point.
+    private int lookPointer = -1;
+    private float lookStartX, lookStartY, lookRadius;
+    private long lookDownMs;
+    private boolean lookMoved;
+    private int tapSequence;
 
     TouchOverlay(GameActivity activity) {
         super(activity);
@@ -87,6 +110,8 @@ final class TouchOverlay extends View {
         leftCy = h - u * 0.24f;
         rightCx = w - u * 0.175f;
         rightCy = h - u * 0.24f;
+        // Full camera speed after dragging about a fifth of the short edge.
+        lookRadius = u * 0.20f;
         leftStickZone = new RectF(leftCx - stickRadius * 1.35f, leftCy - stickRadius * 1.35f,
                 leftCx + stickRadius * 1.35f, leftCy + stickRadius * 1.35f);
         rightStickZone = new RectF(rightCx - stickRadius * 1.35f, rightCy - stickRadius * 1.35f,
@@ -96,6 +121,7 @@ final class TouchOverlay extends View {
         pointerButtons.clear();
         leftPointer = -1;
         rightPointer = -1;
+        lookPointer = -1;
 
         // Shoulder pairs.
         float triggerW = u * 0.145f;
@@ -158,7 +184,9 @@ final class TouchOverlay extends View {
                     if (pointerButtons.get(id) != null) {
                         continue;
                     }
-                    if (id == leftPointer) {
+                    if (id == lookPointer) {
+                        updateLook(event.getX(i), event.getY(i));
+                    } else if (id == leftPointer) {
                         updateStick(event.getX(i), event.getY(i), true);
                     } else if (id == rightPointer) {
                         updateStick(event.getX(i), event.getY(i), false);
@@ -172,18 +200,14 @@ final class TouchOverlay extends View {
                 break;
             }
             case MotionEvent.ACTION_CANCEL: {
-                for (int i = 0; i < pointerButtons.size(); i++) {
-                    releaseButton(pointerButtons.valueAt(i));
-                }
-                pointerButtons.clear();
-                releaseSticks();
+                cancelAll();
                 break;
             }
             default:
                 break;
         }
         invalidate();
-        return pointerButtons.size() > 0 || leftPointer >= 0 || rightPointer >= 0;
+        return true;
     }
 
     private void claim(int pointerId, float x, float y) {
@@ -193,16 +217,29 @@ final class TouchOverlay extends View {
             pressButton(button);
             return;
         }
-        if (leftStickZone.contains(x, y) && leftPointer < 0) {
-            leftPointer = pointerId;
-            updateStick(x, y, true);
-            Logx.d("TouchOverlay", "left stick engaged");
+        if (leftStickZone != null && leftStickZone.contains(x, y)) {
+            if (leftPointer < 0) {
+                leftPointer = pointerId;
+                updateStick(x, y, true);
+                Logx.d("TouchOverlay", "left stick engaged");
+            }
             return;
         }
-        if (rightStickZone.contains(x, y) && rightPointer < 0) {
-            rightPointer = pointerId;
-            updateStick(x, y, false);
-            Logx.d("TouchOverlay", "right stick engaged");
+        if (rightStickZone != null && rightStickZone.contains(x, y)) {
+            if (rightPointer < 0 && lookPointer < 0) {
+                rightPointer = pointerId;
+                updateStick(x, y, false);
+                Logx.d("TouchOverlay", "right stick engaged");
+            }
+            return;
+        }
+        if (lookPointer < 0 && rightPointer < 0) {
+            lookPointer = pointerId;
+            lookStartX = x;
+            lookStartY = y;
+            lookDownMs = SystemClock.uptimeMillis();
+            lookMoved = false;
+            Logx.d("TouchOverlay", "direct look engaged");
         }
     }
 
@@ -225,25 +262,42 @@ final class TouchOverlay extends View {
         return null;
     }
 
-    private void pressButton(PadButton button) {
-        button.down = true;
-        if (button.sdAxis >= 0) {
-            GameActivity.nativePadAxis(button.sdAxis, 1f);
-        } else {
-            GameActivity.nativePadButton(button.sdButton, true);
+    private PadButton buttonFor(int sdButton) {
+        for (PadButton button : buttons) {
+            if (button.sdButton == sdButton) {
+                return button;
+            }
         }
-        Logx.d("TouchOverlay", "pad down " + button.label);
+        return null;
+    }
+
+    private void pressButton(PadButton button) {
+        button.presses++;
+        if (button.presses == 1) {
+            button.down = true;
+            sendButtonState(button, true);
+            Logx.d("TouchOverlay", "pad down " + button.label);
+        }
+        performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
     }
 
     private void releaseButton(PadButton button) {
-        if (button != null && button.down) {
+        if (button == null || button.presses <= 0) {
+            return;
+        }
+        button.presses--;
+        if (button.presses == 0) {
             button.down = false;
-            if (button.sdAxis >= 0) {
-                GameActivity.nativePadAxis(button.sdAxis, 0f);
-            } else {
-                GameActivity.nativePadButton(button.sdButton, false);
-            }
+            sendButtonState(button, false);
             Logx.d("TouchOverlay", "pad up " + button.label);
+        }
+    }
+
+    private void sendButtonState(PadButton button, boolean down) {
+        if (button.sdAxis >= 0) {
+            GameActivity.nativePadAxis(button.sdAxis, down ? 1f : 0f);
+        } else {
+            GameActivity.nativePadButton(button.sdButton, down);
         }
     }
 
@@ -257,26 +311,50 @@ final class TouchOverlay extends View {
             leftPointer = -1;
             lx = 0;
             ly = 0;
-            GameActivity.nativePadAxis(0, 0f);
-            GameActivity.nativePadAxis(1, 0f);
+            GameActivity.nativePadAxis(AXIS_LX, 0f);
+            GameActivity.nativePadAxis(AXIS_LY, 0f);
         }
         if (pointerId == rightPointer) {
             rightPointer = -1;
             rx = 0;
             ry = 0;
-            GameActivity.nativePadAxis(2, 0f);
-            GameActivity.nativePadAxis(3, 0f);
+            GameActivity.nativePadAxis(AXIS_RX, 0f);
+            GameActivity.nativePadAxis(AXIS_RY, 0f);
+        }
+        if (pointerId == lookPointer) {
+            boolean tap = !lookMoved
+                    && SystemClock.uptimeMillis() - lookDownMs <= TAP_MAX_MS
+                    && rx == 0f && ry == 0f;
+            lookPointer = -1;
+            rx = 0;
+            ry = 0;
+            GameActivity.nativePadAxis(AXIS_RX, 0f);
+            GameActivity.nativePadAxis(AXIS_RY, 0f);
+            if (tap) {
+                tapA();
+            }
         }
     }
 
-    private void releaseSticks() {
+    private void cancelAll() {
+        pointerButtons.clear();
+        for (PadButton button : buttons) {
+            button.presses = 0;
+            if (button.down) {
+                button.down = false;
+                sendButtonState(button, false);
+            }
+        }
         leftPointer = -1;
         rightPointer = -1;
+        lookPointer = -1;
         lx = ly = rx = ry = 0;
-        GameActivity.nativePadAxis(0, 0f);
-        GameActivity.nativePadAxis(1, 0f);
-        GameActivity.nativePadAxis(2, 0f);
-        GameActivity.nativePadAxis(3, 0f);
+        for (int axis = AXIS_LX; axis <= AXIS_RY; axis++) {
+            GameActivity.nativePadAxis(axis, 0f);
+        }
+        // A tap pulse may still be in flight; cancel it and make sure A is up.
+        tapSequence++;
+        GameActivity.nativePadButton(BTN_A, false);
     }
 
     private void updateStick(float x, float y, boolean left) {
@@ -292,14 +370,76 @@ final class TouchOverlay extends View {
         if (left) {
             lx = nx;
             ly = ny;
-            GameActivity.nativePadAxis(0, lx);
-            GameActivity.nativePadAxis(1, ly);
+            GameActivity.nativePadAxis(AXIS_LX, lx);
+            GameActivity.nativePadAxis(AXIS_LY, ly);
         } else {
             rx = nx;
             ry = ny;
-            GameActivity.nativePadAxis(2, rx);
-            GameActivity.nativePadAxis(3, ry);
+            GameActivity.nativePadAxis(AXIS_RX, rx);
+            GameActivity.nativePadAxis(AXIS_RY, ry);
         }
+    }
+
+    /**
+     * Direct look: the finger's offset from where it went down is the right
+     * stick's deflection. Re-anchor at the edge so a long swipe keeps turning
+     * instead of running out of travel; releasing stops the camera.
+     */
+    private void updateLook(float x, float y) {
+        if (lookRadius <= 0f) {
+            lookRadius = Math.max(1f, Math.min(getWidth(), getHeight()) * 0.20f);
+        }
+        float dx = x - lookStartX;
+        float dy = y - lookStartY;
+        if (!lookMoved) {
+            float slop = dp(14);
+            if (dx * dx + dy * dy > slop * slop) {
+                lookMoved = true;
+            }
+        }
+        if (dx > lookRadius) {
+            lookStartX = x - lookRadius;
+            dx = lookRadius;
+        } else if (dx < -lookRadius) {
+            lookStartX = x + lookRadius;
+            dx = -lookRadius;
+        }
+        if (dy > lookRadius) {
+            lookStartY = y - lookRadius;
+            dy = lookRadius;
+        } else if (dy < -lookRadius) {
+            lookStartY = y + lookRadius;
+            dy = -lookRadius;
+        }
+        rx = applyDeadzone(dx / lookRadius, LOOK_DEADZONE);
+        ry = applyDeadzone(dy / lookRadius, LOOK_DEADZONE);
+        GameActivity.nativePadAxis(AXIS_RX, rx);
+        GameActivity.nativePadAxis(AXIS_RY, ry);
+    }
+
+    private static float applyDeadzone(float value, float deadzone) {
+        float magnitude = Math.abs(value);
+        if (magnitude <= deadzone) {
+            return 0f;
+        }
+        float scaled = (magnitude - deadzone) / (1f - deadzone);
+        return value < 0f ? -scaled : scaled;
+    }
+
+    /** A tap is the menu's A press; 90 ms is enough for the guest to see it. */
+    private void tapA() {
+        PadButton a = buttonFor(BTN_A);
+        if (a != null && a.down) {
+            return;
+        }
+        final int sequence = ++tapSequence;
+        GameActivity.nativePadButton(BTN_A, true);
+        postDelayed(() -> {
+            if (sequence == tapSequence && (a == null || !a.down)) {
+                GameActivity.nativePadButton(BTN_A, false);
+            }
+        }, TAP_MS);
+        Logx.d("TouchOverlay", "tap -> A");
     }
 
     // ---------------------------------------------------------------- draw
@@ -309,6 +449,12 @@ final class TouchOverlay extends View {
         super.onDraw(canvas);
         drawStick(canvas, leftCx, leftCy, lx, ly, "MOVE");
         drawStick(canvas, rightCx, rightCy, rx, ry, "LOOK");
+        if (lookPointer >= 0 && rightPointer < 0) {
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(dp(1.5f));
+            paint.setColor(Color.argb(80, 236, 240, 244));
+            canvas.drawCircle(rightCx, rightCy, stickRadius * 1.12f, paint);
+        }
 
         for (PadButton button : buttons) {
             drawButton(canvas, button);

@@ -18,6 +18,8 @@
 #include <android/log.h>
 #include <jni.h>
 
+#include <rex/logging.h>
+
 #include <algorithm>
 #include <atomic>
 #include <cstring>
@@ -33,7 +35,9 @@ namespace {
 constexpr int kAxisCount = 6;
 constexpr int kButtonCount = 15;
 
-SDL_Joystick* g_pad = nullptr;
+// Read from the Java UI thread, written once on the SDL thread.
+std::atomic<SDL_Joystick*> g_pad{nullptr};
+std::atomic<bool> g_warned_not_ready{false};
 std::atomic<Sint16> g_axis_state[kAxisCount];
 std::atomic<bool> g_button_state[kButtonCount];
 
@@ -47,12 +51,14 @@ std::string GuidHexForId(SDL_JoystickID instance_id) {
 }  // namespace
 
 void InitVirtualPad() {
-  if (g_pad) {
+  if (g_pad.load(std::memory_order_acquire)) {
     return;
   }
   // The input driver subscribes to gamepad events, so the gamepad subsystem
   // must be up for SDL_AddGamepadMapping to emit GAMEPAD_ADDED.
   if (!SDL_InitSubSystem(SDL_INIT_GAMEPAD)) {
+    REXLOG_ERROR("virtual pad: SDL_InitSubSystem(SDL_INIT_GAMEPAD) failed: {}",
+                 SDL_GetError());
     ALOGE("virtual pad: SDL_InitSubSystem(SDL_INIT_GAMEPAD) failed: %s", SDL_GetError());
     return;
   }
@@ -81,13 +87,16 @@ void InitVirtualPad() {
 
   const SDL_JoystickID instance_id = SDL_AttachVirtualJoystick(&desc);
   if (!instance_id) {
+    REXLOG_ERROR("virtual pad: SDL_AttachVirtualJoystick failed: {}", SDL_GetError());
     ALOGE("virtual pad: SDL_AttachVirtualJoystick failed: %s", SDL_GetError());
     return;
   }
 
-  // Register the standard Xbox-style mapping for the computed GUID. SDL emits
-  // GAMEPAD_ADDED once a mapping matches; the input driver's event watch picks
-  // it up and opens the pad on an XInput port.
+  // Register the standard Xbox-style mapping for the computed GUID. The
+  // virtual driver already exposes an automatic mapping from button_mask /
+  // axis_mask, but naming every element here keeps the layout explicit and
+  // platform-tagged. SDL emits GAMEPAD_ADDED (or REMAPPED if the input driver
+  // opened the automatic mapping first), which is what ReXGlue listens for.
   const std::string guid = GuidHexForId(instance_id);
   const std::string mapping =
       guid + ",Project 1944 Touch Pad,platform:Android," +
@@ -98,22 +107,49 @@ void InitVirtualPad() {
       "lefttrigger:a4,righttrigger:a5,";
   const int added = SDL_AddGamepadMapping(mapping.c_str());
   if (added < 0) {
-    ALOGE("virtual pad: mapping failed: %s", SDL_GetError());
+    REXLOG_ERROR("virtual pad: SDL_AddGamepadMapping failed: {}", SDL_GetError());
+    ALOGE("virtual pad: SDL_AddGamepadMapping failed: %s", SDL_GetError());
   }
 
-  g_pad = SDL_GetJoystickFromID(instance_id);
-  if (!g_pad) {
-    ALOGE("virtual pad: SDL_GetJoystickFromID failed: %s", SDL_GetError());
+  // Attaching a joystick does NOT open it: SDL_GetJoystickFromID() only sees
+  // opened joysticks. ReXGlue's driver opens the gamepad lazily when it drains
+  // the GAMEPAD_ADDED event, which happens on a later input poll - long after
+  // InitVirtualPad() returns. Open the joystick here so the JNI setters have a
+  // valid handle immediately. The driver's later SDL_OpenGamepad() returns the
+  // same joystick (SDL reference-counts it).
+  SDL_Joystick* pad = SDL_OpenJoystick(instance_id);
+  if (!pad) {
+    pad = SDL_GetJoystickFromID(instance_id);
+  }
+  if (!pad) {
+    REXLOG_ERROR("virtual pad: could not open virtual joystick: {}", SDL_GetError());
+    ALOGE("virtual pad: could not open virtual joystick: %s", SDL_GetError());
     return;
   }
+
   for (auto& axis : g_axis_state) {
     axis.store(0);
   }
   for (auto& button : g_button_state) {
     button.store(false);
   }
-  ALOGI("virtual pad: attached '%s' (id=%u, guid=%s)", desc.name,
-        static_cast<unsigned>(instance_id), guid.c_str());
+
+  const bool is_gamepad = SDL_IsGamepad(instance_id);
+  REXLOG_INFO(
+      "virtual pad: attached '{}' id={} guid={} gamepad={} mapping={} "
+      "axes={} buttons={}",
+      desc.name, static_cast<unsigned>(instance_id), guid.c_str(), is_gamepad,
+      added, SDL_GetNumJoystickAxes(pad), SDL_GetNumJoystickButtons(pad));
+  ALOGI("virtual pad: attached '%s' (id=%u, guid=%s, gamepad=%d)",
+        desc.name, static_cast<unsigned>(instance_id), guid.c_str(),
+        is_gamepad ? 1 : 0);
+  if (!is_gamepad) {
+    REXLOG_WARN(
+        "virtual pad: SDL does not consider the device a gamepad; ReXGlue "
+        "will not receive GAMEPAD events");
+  }
+
+  g_pad.store(pad, std::memory_order_release);
 }
 
 // JNI bridge. extern "C" inside the namespace keeps the exported symbols
@@ -126,7 +162,11 @@ extern "C" {
 JNIEXPORT void JNICALL
 Java_com_project1944_cod3_GameActivity_nativePadAxis(JNIEnv* /*env*/, jclass, jint axis,
                                                      jfloat value) {
-  if (!g_pad || axis < 0 || axis >= kAxisCount) {
+  SDL_Joystick* pad = g_pad.load(std::memory_order_acquire);
+  if (!pad || axis < 0 || axis >= kAxisCount) {
+    if (!pad && !g_warned_not_ready.exchange(true)) {
+      REXLOG_WARN("virtual pad: axis input arrived before the pad was attached");
+    }
     return;
   }
   const float clamped = std::clamp(value, -1.0f, 1.0f);
@@ -134,19 +174,23 @@ Java_com_project1944_cod3_GameActivity_nativePadAxis(JNIEnv* /*env*/, jclass, ji
   if (g_axis_state[axis].exchange(v) == v) {
     return;
   }
-  SDL_SetJoystickVirtualAxis(g_pad, axis, v);
+  SDL_SetJoystickVirtualAxis(pad, axis, v);
 }
 
 JNIEXPORT void JNICALL
 Java_com_project1944_cod3_GameActivity_nativePadButton(JNIEnv* /*env*/, jclass, jint button,
                                                        jboolean down) {
-  if (!g_pad || button < 0 || button >= kButtonCount) {
+  SDL_Joystick* pad = g_pad.load(std::memory_order_acquire);
+  if (!pad || button < 0 || button >= kButtonCount) {
+    if (!pad && !g_warned_not_ready.exchange(true)) {
+      REXLOG_WARN("virtual pad: button input arrived before the pad was attached");
+    }
     return;
   }
   if (g_button_state[button].exchange(down) == down) {
     return;
   }
-  SDL_SetJoystickVirtualButton(g_pad, button, down);
+  SDL_SetJoystickVirtualButton(pad, button, down);
 }
 
 }  // extern "C"

@@ -43,6 +43,9 @@ public final class GameActivity extends SDLActivity {
 
         setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
         super.onCreate(savedInstanceState);
+        // SDL may ask for an orientation again when it creates its window.
+        // Re-assert the manifest value after the surface has been created.
+        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
 
         overlay = new TouchOverlay(this);
         addContentView(overlay, new ViewGroup.LayoutParams(
@@ -69,6 +72,21 @@ public final class GameActivity extends SDLActivity {
     protected void onDestroy() {
         Logx.i("GameActivity", "onDestroy");
         super.onDestroy();
+    }
+
+    /**
+     * SDL creates its window before Android has necessarily applied the
+     * manifest orientation. If that first surface is portrait, SDL's default
+     * implementation asks for SENSOR_PORTRAIT and the game flips sideways.
+     * This port is landscape-only, so ignore SDL's width/height guess and keep
+     * the sensor-landscape lock at all times.
+     */
+    @Override
+    public void setOrientationBis(int w, int h, boolean resizable, String hint) {
+        Logx.i("GameActivity", "orientation lock: landscape (SDL requested "
+                + w + "x" + h + ", hint=" + hint + ")");
+        runOnUiThread(() ->
+                setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE));
     }
 
     @Override

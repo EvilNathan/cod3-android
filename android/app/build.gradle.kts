@@ -13,8 +13,8 @@ android {
         applicationId = "com.project1944.cod3"
         minSdk = 28
         targetSdk = 35
-        versionCode = 9
-        versionName = "0.1.0-m4c"
+        versionCode = 10
+        versionName = "0.1.0-m4d"
 
         ndk {
             abiFilters += "arm64-v8a"

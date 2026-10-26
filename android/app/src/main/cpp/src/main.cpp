@@ -9,6 +9,7 @@
  */
 
 #include <SDL3/SDL_main.h>
+#include <SDL3/SDL_hints.h>
 #include <SDL3/SDL_system.h>
 
 #include <android/log.h>
@@ -192,6 +193,13 @@ int RunAndroidApp(int argc, char** argv) {
   if (lib_dir.empty()) {
     ALOGE("nativeLibraryDir unresolved; GPU plugin staging will fail");
   }
+
+  // The first Android surface can be portrait even when the manifest says
+  // sensorLandscape. SDL uses the window width/height to pick SENSOR_PORTRAIT
+  // in that case; restricting the allowed orientations makes SDL's own
+  // request landscape too. GameActivity.setOrientationBis() is the final
+  // guard for requests that still arrive with a portrait size.
+  SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
 
   rex::SetAndroidApplicationContext(java_vm, SDL_GetAndroidActivity(), lib_dir.c_str());
 

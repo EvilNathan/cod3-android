@@ -42,10 +42,18 @@ Status: **M3/M4 — boot, render, input sentuh + gamepad, audio, save/load.**
    bisa 1–3 menit (kompilasi pipeline Vulkan sekali jalan).
 
 ### Kontrol sentuh
-Overlay di layar (kiri = gerak, kanan = kamera):
-- **Stik kiri** — gerak; **stik kanan** — pandangan (sentuh area, seret).
+Game **selalu landscape** (tidak ikut berputar ke portrait). Overlay di layar:
+- **Seret di mana saja** (kecuali tombol/stik) — kamera langsung berputar
+  mengikuti arah seret; makin jauh dari titik sentuh, makin cepat putarannya.
+  Lepas layar = kamera berhenti. Tidak perlu mencari stik kanan.
+- **Tap singkat** di area kosong — tombol **A** (konfirmasi di menu, lompat
+  in-game). Cocok untuk memilih menu dengan mengetuk langsung.
+- **Stik kiri** (kiri bawah) — gerak karakter; **stik kanan** (kanan bawah) —
+  alternatif untuk kamera bila lebih suka stik.
 - Tombol muka **A/B/X/Y** (kanan bawah), **LB/RB** + **LT/RT** (pilar atas).
 - **BACK / START** di tengah atas.
+- Semua tombol bisa ditekan langsung dengan jari; beberapa jari sekaligus
+  didukung (mis. gerak + lihat + tembak).
 - Gamepad fisik (Xbox/DS4/DualSense via Bluetooth) otomatis dipakai untuk
   semua port XInput — overlay tetap bisa dipakai bersamaan.
 
