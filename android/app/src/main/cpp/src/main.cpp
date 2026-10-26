@@ -15,6 +15,7 @@
 #include <dlfcn.h>
 #include <jni.h>
 
+#include <array>
 #include <cstdlib>
 #include <filesystem>
 #include <memory>
@@ -23,6 +24,7 @@
 #include <utility>
 
 #include <rex/cvar.h>
+#include <rex/filesystem.h>
 #include <rex/logging.h>
 #include <rex/main_android.h>
 #include <rex/platform.h>
@@ -31,6 +33,7 @@
 #include <rex/ui/windowed_app_context_sdl.h>
 
 #include "cod3_pc_init.h"
+#include "sha256.h"
 #include "touch_pad.h"
 
 #if REX_PLATFORM_ANDROID
@@ -127,6 +130,56 @@ class Cod3AndroidApp final : public rex::ReXApp {
       paths.config_path = user_root / "cod3_pc.toml";
     }
   }
+
+  // Runs after Runtime::Setup: the VFS is mounted. Read the entrypoint XEX
+  // through the VFS (host folder or disc image - the same path the guest will
+  // load) and log its digest so a wrong disc revision is visible in logs.
+  void OnPostSetup() override {
+    rex::filesystem::VirtualFileSystem* vfs = runtime()->file_system();
+    if (!vfs) {
+      return;
+    }
+    rex::filesystem::Entry* entry = vfs->ResolvePath("game:\\default.xex");
+    if (!entry) {
+      REXLOG_ERROR("OnPostSetup: game:\\default.xex not found on the mounted game data");
+      return;
+    }
+    rex::filesystem::File* file = nullptr;
+    if (XFAILED(entry->Open(rex::filesystem::FileAccess::kGenericRead, &file)) || !file) {
+      REXLOG_ERROR("OnPostSetup: failed to open game:\\default.xex");
+      return;
+    }
+    project1944::Sha256 hasher;
+    std::array<uint8_t, 64 * 1024> buffer;
+    size_t offset = 0;
+    for (;;) {
+      size_t bytes_read = 0;
+      const auto status = file->ReadSync(buffer, offset, &bytes_read);
+      if (XFAILED(status)) {
+        REXLOG_ERROR("OnPostSetup: default.xex read failed at offset {}: {:08X}", offset,
+                     static_cast<uint32_t>(status));
+        file->Destroy();
+        return;
+      }
+      if (!bytes_read) {
+        break;
+      }
+      hasher.update(buffer.data(), bytes_read);
+      offset += bytes_read;
+    }
+    file->Destroy();
+    const std::string digest = hasher.hexdigest();
+    REXLOG_INFO("OnPostSetup: default.xex {} bytes, SHA-256 {}", offset, digest);
+    if (digest != kSupportedXexSha256) {
+      REXLOG_WARN(
+          "OnPostSetup: default.xex SHA-256 differs from the supported build "
+          "({}); this disc revision is untested", kSupportedXexSha256);
+    }
+  }
+
+ private:
+  static constexpr char kSupportedXexSha256[] =
+      "2944EEC7D1231AD6798B5F9FADF8855F5E489296B22EAB45B27A577CEE23692";
 };
 
 int RunAndroidApp(int argc, char** argv) {

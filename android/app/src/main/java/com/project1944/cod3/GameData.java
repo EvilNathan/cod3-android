@@ -43,6 +43,13 @@ final class GameData {
         return path != null && new File(path, "default.xex").isFile();
     }
 
+    /** True when the configured path is a disc image file (.iso). */
+    static boolean isIso(String path) {
+        return path != null
+                && path.toLowerCase(Locale.US).endsWith(".iso")
+                && new File(path).isFile();
+    }
+
     static String sha256(File file) {
         try (FileInputStream in = new FileInputStream(file)) {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
@@ -69,31 +76,50 @@ final class GameData {
                 return null;
             }
             String docId = DocumentsContract.getTreeDocumentId(treeUri);
-            int colon = docId.indexOf(':');
-            if (colon < 0) {
-                return null;
-            }
-            String volume = docId.substring(0, colon);
-            String relative = docId.substring(colon + 1);
-            if (!"primary".equalsIgnoreCase(volume) && !"home".equalsIgnoreCase(volume)) {
-                // SD cards and USB volumes are not mapped: the native filesystem
-                // layer only understands absolute paths such as /storage/XXXX-XXXX.
-                File[] externals = new File("/storage").listFiles();
-                if (externals != null) {
-                    for (File candidate : externals) {
-                        if (candidate.getName().equalsIgnoreCase(volume)) {
-                            return new File(candidate, relative).getAbsolutePath();
-                        }
-                    }
-                }
-                return null;
-            }
-            File base = Environment.getExternalStorageDirectory();
-            return relative.isEmpty() ? base.getAbsolutePath()
-                    : new File(base, relative).getAbsolutePath();
+            return volumeIdToPath(docId);
         } catch (Exception e) {
             Logx.e("GameData", "treeToPath failed: " + treeUri, e);
             return null;
         }
+    }
+
+    /** Converts a SAF single-document URI (e.g. a picked .iso) to a real path. */
+    static String documentToPath(Uri docUri) {
+        try {
+            if (!"com.android.externalstorage.documents".equals(docUri.getAuthority())) {
+                return null;
+            }
+            String docId = DocumentsContract.getDocumentId(docUri);
+            return volumeIdToPath(docId);
+        } catch (Exception e) {
+            Logx.e("GameData", "documentToPath failed: " + docUri, e);
+            return null;
+        }
+    }
+
+    /** Maps a "volume:relative/path" document id to an absolute host path. */
+    private static String volumeIdToPath(String docId) {
+        int colon = docId.indexOf(':');
+        if (colon < 0) {
+            return null;
+        }
+        String volume = docId.substring(0, colon);
+        String relative = docId.substring(colon + 1);
+        if (!"primary".equalsIgnoreCase(volume) && !"home".equalsIgnoreCase(volume)) {
+            // SD cards and USB volumes are not mapped: the native filesystem
+            // layer only understands absolute paths such as /storage/XXXX-XXXX.
+            File[] externals = new File("/storage").listFiles();
+            if (externals != null) {
+                for (File candidate : externals) {
+                    if (candidate.getName().equalsIgnoreCase(volume)) {
+                        return new File(candidate, relative).getAbsolutePath();
+                    }
+                }
+            }
+            return null;
+        }
+        File base = Environment.getExternalStorageDirectory();
+        return relative.isEmpty() ? base.getAbsolutePath()
+                : new File(base, relative).getAbsolutePath();
     }
 }

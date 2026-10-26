@@ -4,20 +4,20 @@ Port Android Call of Duty 3 (rekompilasi Xbox 360 → ReXGlue → ARM64 Android)
 Status: **M3/M4 — boot, render, input sentuh + gamepad, audio, save/load.**
 
 > Data game **tidak** dibundel ke APK. Kamu butuh salinan game sendiri
-> (ISO Xbox 360 milikmu) yang sudah di-ekstrak. APK bersifat lokal; jangan
-> didistribusikan bersama file game.
+> (ISO Xbox 360 milikmu) — sekarang **tanpa ekstraksi**: ISO langsung
+> di-mount. APK bersifat lokal; jangan didistribusikan bersama file game.
 
 ## 1. Persiapan sekali saja
 
-1. **Salin data game** ke memori internal HP:
-   ```
-   /sdcard/cod3/default.xex
-   /sdcard/cod3/sp/...
-   /sdcard/cod3/config/...
-   /sdcard/cod3/movies/...   (opsional, untuk cutscene)
-   ```
+1. **Data game** — dua opsi:
+   - **ISO langsung (disarankan)**: taruh `Call of Duty 3.iso` di memori
+     internal, mis. `/sdcard/Call of Duty 3.iso`, lalu di app tekan
+     **PICK ISO** dan pilih file itu. **Tidak perlu ekstrak** — game boot
+     langsung dari disc image (di-mount read-only via GDFX/XISO di native).
+   - **Folder terekstrak**: `/sdcard/cod3/default.xex` + `sp/…` + `config/…`
+     (hasil ekstrak ISO sebelumnya juga tetap didukung).
    (Saat HP terhubung via USB/ADB, script `D:\stage\deploy-device.ps1` bisa
-   menyalin ini otomatis dari `D:\cod3-game`.)
+   menyalin file dari `D:\cod3-game` secara otomatis.)
 
 2. **Izinkan akses Semua File** (MANAGE_EXTERNAL_STORAGE) untuk aplikasi
    "Project 1944":
@@ -33,10 +33,10 @@ Status: **M3/M4 — boot, render, input sentuh + gamepad, audio, save/load.**
 ## 2. Menjalankan
 
 1. Buka aplikasi **Project 1944**.
-2. Pilih **game folder** — pertama kali aplikasi meminta kamu memilih folder
-   `/sdcard/cod3` (yang berisi `default.xex`).
-3. Game boot: layar loading → menu utama. Total boot pertama bisa 1–3 menit
-   (kompilasi pipeline Vulkan sekali jalan).
+2. Di layar utama pilih **PICK ISO** (disc image) atau **PICK FOLDER**
+   (folder hasil ekstrak); tombol **RECHECK** memvalidasi pilihan.
+3. Tekan **LAUNCH GAME** — game boot: loading → menu utama. Boot pertama
+   bisa 1–3 menit (kompilasi pipeline Vulkan sekali jalan).
 
 ### Kontrol sentuh
 Overlay di layar (kiri = gerak, kanan = kamera):
@@ -66,7 +66,7 @@ Kirim ke pengembang: dua file di atas + potongan `logcat` saat crash.
 
 | # | Item | Cara cek | Hasil yang diharapkan |
 |---|---|---|---|
-| M3-1 | Boot | Launch app → pilih folder | Loading → menu utama, ada frame pertama |
+| M3-1 | Boot | Launch app → PICK ISO/folder | Loading → menu utama, ada frame pertama |
 | M3-2 | Render menu | Main menu | Tampil normal (bukan hitam/putih) |
 | M3-3 | Level 1 load | Mulai campaign Saint-Lô | Load selesai → briefing/level |
 | M3-4 | Render in-game | Bergerak 30 dtk | Adegan tampil, HUD terlihat |

@@ -46,6 +46,7 @@ import java.util.Locale;
 public final class MainActivity extends Activity {
     private static final int PICK_GAME_FOLDER = 1001;
     private static final int PERMISSION_READ_STORAGE = 1002;
+    private static final int PICK_GAME_ISO = 1003;
 
     private static final int BG = Color.rgb(8, 10, 13);
     private static final int PANEL = Color.rgb(19, 23, 28);
@@ -95,8 +96,7 @@ public final class MainActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode != PICK_GAME_FOLDER || resultCode != RESULT_OK || data == null
-                || data.getData() == null) {
+        if (resultCode != RESULT_OK || data == null || data.getData() == null) {
             return;
         }
         Uri uri = data.getData();
@@ -106,14 +106,26 @@ public final class MainActivity extends Activity {
         } catch (Exception e) {
             Logx.w("MainActivity", "persistable permission rejected: " + e.getMessage());
         }
-        String path = GameData.treeToPath(uri);
-        if (path == null) {
-            Logx.e("MainActivity", "picker returned unmappable tree: " + uri);
-            toast("That folder is not on accessible storage. Use /sdcard/cod3 instead.");
+        String path;
+        if (requestCode == PICK_GAME_ISO) {
+            path = GameData.documentToPath(uri);
+            if (path == null) {
+                Logx.e("MainActivity", "picker returned unmappable document: " + uri);
+                toast("That file is not on accessible storage. Copy it to /sdcard and retry.");
+                return;
+            }
+        } else if (requestCode == PICK_GAME_FOLDER) {
+            path = GameData.treeToPath(uri);
+            if (path == null) {
+                Logx.e("MainActivity", "picker returned unmappable tree: " + uri);
+                toast("That folder is not on accessible storage. Use /sdcard/cod3 instead.");
+                return;
+            }
+        } else {
             return;
         }
         GameData.save(this, path);
-        Logx.i("MainActivity", "game folder selected: " + path);
+        Logx.i("MainActivity", "game data selected: " + path);
         refreshData();
     }
 
@@ -178,7 +190,7 @@ public final class MainActivity extends Activity {
         content.addView(buildLaunchButton());
 
         TextView footer = text("Log: " + Logx.file(this).getAbsolutePath()
-                + "\nTap to copy the path. M1a build - the game itself is not included.",
+                + "\nTap to copy the path. M4 build - the game itself is not included.",
                 11, MUTED);
         footer.setTypeface(Typeface.MONOSPACE);
         footer.setPadding(dp(4), dp(18), dp(4), 0);
@@ -250,6 +262,7 @@ public final class MainActivity extends Activity {
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.addView(actionButton("PICK FOLDER", true, v -> pickFolder()));
+        row.addView(actionButton("PICK ISO", false, v -> pickIso()));
         row.addView(actionButton("USE /sdcard/cod3", false, v -> useDefaultFolder()));
         row.addView(actionButton("RECHECK", false, v -> refreshData()));
         card.addView(row);
@@ -336,8 +349,27 @@ public final class MainActivity extends Activity {
         refreshData();
     }
 
+    private void pickIso() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("*/*");
+        intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{
+                "application/x-iso9660-image", "application/x-cd-image",
+                "application/octet-stream"});
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
+                | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+        try {
+            startActivityForResult(intent, PICK_GAME_ISO);
+            Logx.i("MainActivity", "disc image picker opened");
+        } catch (Exception e) {
+            Logx.e("MainActivity", "no document picker", e);
+            toast("No system file picker available. Put the .iso in /sdcard/cod3.");
+        }
+    }
+
     private void launchGame() {
-        if (!GameData.hasXex(GameData.resolve(this))) {
+        String path = GameData.resolve(this);
+        if (!GameData.hasXex(path) && !GameData.isIso(path)) {
             toast("Game data missing - default.xex is not readable, the guest cannot boot.");
         }
         Logx.i("MainActivity", "launching GameActivity");
@@ -352,22 +384,31 @@ public final class MainActivity extends Activity {
         dataState.setText("Checking default.xex...");
 
         new Thread(() -> {
-            File xex = new File(path, "default.xex");
             String state;
             int color;
-            if (!xex.isFile()) {
-                state = diagnoseMissingData(path);
-                color = RED;
-                Logx.w("MainActivity", "game data: " + state.replace('\n', ' '));
+            if (GameData.isIso(path)) {
+                // Boots directly from the disc image via the GDFX/XISO VFS
+                // device - the game itself stays inside the image. The native
+                // side logs the default.xex digest at boot for verification.
+                state = "Disc image (.iso) - will be mounted directly, no extraction needed.";
+                color = GREEN;
+                Logx.i("MainActivity", "game data: disc image at " + path);
             } else {
-                Logx.i("MainActivity", "hashing " + xex + " (" + xex.length() + " bytes)");
-                String sha = GameData.sha256(xex);
-                if (GameData.SUPPORTED_SHA256.equalsIgnoreCase(sha)) {
-                    state = "default.xex verified - SHA-256 matches the supported build.";
-                    color = GREEN;
+                File xex = new File(path, "default.xex");
+                if (!xex.isFile()) {
+                    state = diagnoseMissingData(path);
+                    color = RED;
+                    Logx.w("MainActivity", "game data: " + state.replace('\n', ' '));
                 } else {
-                    state = "SHA-256 mismatch. This revision is untested.\n" + sha;
-                    color = GOLD;
+                    Logx.i("MainActivity", "hashing " + xex + " (" + xex.length() + " bytes)");
+                    String sha = GameData.sha256(xex);
+                    if (GameData.SUPPORTED_SHA256.equalsIgnoreCase(sha)) {
+                        state = "default.xex verified - SHA-256 matches the supported build.";
+                        color = GREEN;
+                    } else {
+                        state = "SHA-256 mismatch. This revision is untested.\n" + sha;
+                        color = GOLD;
+                    }
                 }
             }
             final String finalState = state;
@@ -385,9 +426,10 @@ public final class MainActivity extends Activity {
     }
 
     /**
-     * Explains why default.xex is not visible. The common mistakes are putting
-     * the ISO itself in the folder instead of its extracted contents, and
-     * missing All-files access, which hides /sdcard/cod3 from the app.
+     * Explains why default.xex is not visible. The common mistakes are a
+     * missing All-files access grant (which hides /sdcard/cod3 from the app)
+     * and pointing at a folder that has not been populated yet. A disc image
+     * is fully supported via PICK ISO - extraction is not required.
      */
     private String diagnoseMissingData(String path) {
         File dir = new File(path);
@@ -422,11 +464,12 @@ public final class MainActivity extends Activity {
             out.append(" ...");
         }
         if (isoCount > 0) {
-            out.append("\nAn ISO file is present. Extract it and keep default.xex, sp/ and")
-                    .append(" the other files directly in this folder; the APK cannot read")
-                    .append(" an ISO.");
+            out.append("\nAn ISO file is present - no extraction is needed: press")
+                    .append(" PICK ISO and select it. The game boots directly")
+                    .append(" from the disc image.");
         } else {
-            out.append("\nCopy the extracted disc contents here, not the ISO.");
+            out.append("\nCopy the extracted disc contents here, or press PICK ISO")
+                    .append(" and choose the .iso directly.");
         }
         return out.toString();
     }
