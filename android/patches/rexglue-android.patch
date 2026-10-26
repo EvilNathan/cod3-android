@@ -1240,10 +1240,25 @@ index 5bd3dc5..a2e99de 100644
      pkg_check_modules(X11_XCB REQUIRED x11-xcb)
      # Required, not optional: vulkan/api.h pulls in <wayland-client.h> on every
 diff --git a/src/ui/rex_app.cpp b/src/ui/rex_app.cpp
-index b94fe9e..e2fb8bb 100644
+index b94fe9e..d27ade2 100644
 --- a/src/ui/rex_app.cpp
 +++ b/src/ui/rex_app.cpp
-@@ -275,7 +275,11 @@ bool ReXApp::ConstructRuntime(const PathConfig& paths) {
+@@ -207,7 +207,13 @@ bool ReXApp::ConstructRuntime(const PathConfig& paths) {
+     rex::ShowSimpleMessageBox(rex::SimpleMessageBoxType::Error, msg);
+     return false;
+   }
+-  if (!std::filesystem::is_directory(paths.game_data_root)) {
++  // The game data root is either an unpacked folder or a GDFX/XISO disc
++  // image mounted read-only by Runtime::SetupVfs - accept both.
++  std::error_code exists_ec;
++  const bool exists = std::filesystem::exists(paths.game_data_root, exists_ec);
++  const bool is_file = !exists_ec && std::filesystem::is_regular_file(paths.game_data_root, exists_ec);
++  const bool is_dir = !exists_ec && std::filesystem::is_directory(paths.game_data_root, exists_ec);
++  if (!exists || (!is_file && !is_dir)) {
+     auto msg = fmt::format("--game_data_root does not exist: {}", paths.game_data_root.string());
+     REXLOG_ERROR("{}", msg);
+     rex::ShowSimpleMessageBox(rex::SimpleMessageBoxType::Error, msg);
+@@ -275,7 +281,11 @@ bool ReXApp::ConstructRuntime(const PathConfig& paths) {
      std::string host_tail{tail};
      std::replace(host_tail.begin(), host_tail.end(), '\\', '/');
      auto xex_host = paths.game_data_root / host_tail;

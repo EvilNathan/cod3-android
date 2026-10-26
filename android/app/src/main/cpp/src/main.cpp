@@ -232,17 +232,24 @@ int RunAndroidApp(int argc, char** argv) {
   if (game_data.empty()) {
     REXLOG_ERROR("android_main: no game data directory selected");
   } else {
-    const auto xex = std::filesystem::path(game_data) / "default.xex";
     std::error_code ec;
-    const auto size = std::filesystem::file_size(xex, ec);
-    if (ec) {
-      std::error_code dir_ec;
-      const bool exists = std::filesystem::exists(game_data, dir_ec);
-      const bool is_dir = std::filesystem::is_directory(game_data, dir_ec);
-      REXLOG_ERROR("android_main: default.xex missing in {} (dir exists={} is_dir={})",
-                   game_data, exists, is_dir);
+    const bool is_file = std::filesystem::is_regular_file(game_data, ec);
+    if (is_file) {
+      const auto iso_size = std::filesystem::file_size(game_data, ec);
+      REXLOG_INFO("android_main: disc image selected ({} bytes) - mounted directly, no extraction",
+                  ec ? 0 : iso_size);
     } else {
-      REXLOG_INFO("android_main: default.xex found ({} bytes)", size);
+      const auto xex = std::filesystem::path(game_data) / "default.xex";
+      const auto size = std::filesystem::file_size(xex, ec);
+      if (ec) {
+        std::error_code dir_ec;
+        const bool exists = std::filesystem::exists(game_data, dir_ec);
+        const bool is_dir = std::filesystem::is_directory(game_data, dir_ec);
+        REXLOG_ERROR("android_main: default.xex missing in {} (dir exists={} is_dir={})",
+                     game_data, exists, is_dir);
+      } else {
+        REXLOG_INFO("android_main: default.xex found ({} bytes)", size);
+      }
     }
   }
 
