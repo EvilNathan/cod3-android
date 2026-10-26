@@ -62,16 +62,17 @@ Game **selalu landscape** (tidak ikut berputar ke portrait). Overlay di layar:
 Jika layar hitam / crash / keluar sendiri:
 
 1. **In-app log** (jika bisa masuk):
-   `/sdcard/Android/data/com.project1944.cod3/files/`
-   - `logfile.txt` — log game (ReXGlue + game)
-   - `native-log.txt` — log native
+   `/sdcard/Android/data/com.project1944.cod3/files/native-log.txt`
+   Satu file berisi header sesi, baris Java, dan baris ReXGlue/Vulkan/guest.
+   File di-reset setiap mulai game baru, jadi tidak ada `native-log.1.txt`
+   atau `logfile.txt` terpisah — kirim file `native-log.txt` yang terbaru saja.
 2. **logcat**:
    ```
    adb logcat -s project1944 SDL/APP AndroidRuntime DEBUG
    ```
    Tag `project1944` = log port; `SDL/APP` = SDL3 Android backend.
 
-Kirim ke pengembang: dua file di atas + potongan `logcat` saat crash.
+Kirim ke pengembang: `native-log.txt` + potongan `logcat` saat crash.
 
 ## 4. Checklist validasi (lapor per item)
 
@@ -110,5 +111,5 @@ Kirim ke pengembang: dua file di atas + potongan `logcat` saat crash.
 Kirim:
 1. Perangkat (merk/model, SoC, RAM, Android versi).
 2. Checklist di atas (per item: OK / FAIL + keterangan).
-3. `logfile.txt`, `native-log.txt`, potongan `logcat` saat kejadian.
+3. `native-log.txt`, potongan `logcat` saat kejadian.
 4. Screenshot/rekaman jika memungkinkan.

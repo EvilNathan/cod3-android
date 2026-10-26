@@ -27,18 +27,18 @@ attached while this build was made. The launcher can pick a game folder or use
 `/sdcard/cod3`, verifies `default.xex`, and adds a touch overlay on top of the
 SDL surface.
 
-Logs go to two files in the app external files folder:
+Logs go to one file in the app external files folder:
 
 ```
-logfile.txt       # launcher and Java lines
-native-log.txt    # ReXGlue runtime, Vulkan and guest lines
+native-log.txt    # session header, Java lines, ReXGlue/Vulkan/guest lines
 ```
 
-The split is deliberate: the SDK file sink opens its file with truncation, so
-sharing one path with the Java appender corrupted both files.
+`GameActivity` truncates it at the start of every game session, then the native
+sink appends to the same absolute path. There is no rotation and no separate
+`logfile.txt`; old split/rotated logs are deleted when a session starts.
 
-The launcher footer shows the Java path; tap it to copy. `adb pull` both files
-after testing. Native lines also appear in logcat under the `project1944` tag.
+The launcher footer shows the path; tap it to copy. `adb pull` the file after
+testing. Java lines also appear in logcat under the `project1944` tag.
 
 ## Game data
 
@@ -168,7 +168,7 @@ android/
       MainActivity.java     # launcher, diagnostics, picker
       GameActivity.java     # SDLActivity subclass + content:// bridge
       GameData.java         # /sdcard/cod3 fallback + SHA-256
-      Logx.java             # logfile.txt + logcat
+      Logx.java             # native-log.txt + logcat
       TouchOverlay.java     # on-screen gamepad
     src/main/java/org/libsdl/app/
       ...                   # official SDL3 Android Java glue (zlib)

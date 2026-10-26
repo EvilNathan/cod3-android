@@ -11,14 +11,17 @@ import java.util.Date;
 import java.util.Locale;
 
 /**
- * One predictable log file for the whole APK.
+ * One fixed log file for the whole APK: {@code getExternalFilesDir(null)/native-log.txt}.
  *
- * Java lines and the ReXGlue native sink both append to
- * {@code getExternalFilesDir(null)/logfile.txt}. The native side receives the
- * same path through GameActivity.nativeSetPaths().
+ * Java lines and the ReXGlue native sink append to the same absolute path.
+ * {@link #startSession(Context, String)} truncates it at the start of every
+ * game session, so a new run never inherits lines or rotated copies from the
+ * previous run.
  */
 final class Logx {
     private static final String TAG = "project1944";
+    private static final String FILE_NAME = "native-log.txt";
+    private static final String LEGACY_FILE_NAME = "logfile.txt";
     private static File sFile;
 
     private Logx() {}
@@ -29,13 +32,32 @@ final class Logx {
             if (dir == null) {
                 dir = context.getFilesDir();
             }
-            sFile = new File(dir, "logfile.txt");
+            sFile = new File(dir, FILE_NAME);
         }
         return sFile;
     }
 
     static synchronized File file(Context context) {
         return init(context);
+    }
+
+    /**
+     * Truncates the single log file and writes a session header. Called from
+     * GameActivity before the native runtime starts, so the native append
+     * sink sees an empty file and both sides share one file.
+     */
+    static synchronized void startSession(Context context, String detail) {
+        File file = init(context);
+        String stamp = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)
+                .format(new Date());
+        String header = "===== SESSION " + stamp + " build=" + versionName(context)
+                + " " + detail + " =====\n";
+        try (FileOutputStream out = new FileOutputStream(file, false)) {
+            out.write(header.getBytes(StandardCharsets.UTF_8));
+        } catch (Exception ignored) {
+            // Logging must never take the app down.
+        }
+        cleanupPreviousFiles(file);
     }
 
     static void d(String tag, String message) {
@@ -71,6 +93,41 @@ final class Logx {
             out.write(line);
         } catch (Exception ignored) {
             // Logging must never take the app down.
+        }
+    }
+
+    private static String versionName(Context context) {
+        try {
+            return context.getPackageManager()
+                    .getPackageInfo(context.getPackageName(), 0).versionName;
+        } catch (Exception ignored) {
+            return "unknown";
+        }
+    }
+
+    /**
+     * Removes the old split Java log and any rotated native files
+     * (native-log.1.txt ... native-log.20.txt) left by earlier builds.
+     */
+    private static void cleanupPreviousFiles(File keep) {
+        File dir = keep.getParentFile();
+        if (dir == null) {
+            return;
+        }
+        File[] files = dir.listFiles();
+        if (files == null) {
+            return;
+        }
+        for (File file : files) {
+            if (file.equals(keep)) {
+                continue;
+            }
+            String name = file.getName();
+            if (LEGACY_FILE_NAME.equals(name)
+                    || (name.startsWith("native-log.") && name.endsWith(".txt"))) {
+                //noinspection ResultOfMethodCallIgnored
+                file.delete();
+            }
         }
     }
 }

@@ -30,13 +30,15 @@ public final class GameActivity extends SDLActivity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
-        Logx.init(this);
         String gamePath = GameData.resolve(this);
         String logPath = Logx.file(this).getAbsolutePath();
+        // One fixed file per game session: truncate before the native runtime
+        // opens its append sink, then log the session header.
+        Logx.startSession(this, "game=" + gamePath + " log=" + logPath);
         Logx.i("GameActivity", "onCreate game=" + gamePath + " log=" + logPath);
         try {
             nativeSetPaths(logPath, gamePath);
-            Logx.i("GameActivity", "native runtime lines go to native-log.txt next to this file");
+            Logx.i("GameActivity", "single session log: " + logPath);
         } catch (UnsatisfiedLinkError e) {
             Logx.e("GameActivity", "nativeSetPaths unavailable", e);
         }
@@ -70,7 +72,7 @@ public final class GameActivity extends SDLActivity {
 
     @Override
     protected void onDestroy() {
-        Logx.i("GameActivity", "onDestroy");
+        Logx.i("GameActivity", "session end / onDestroy");
         super.onDestroy();
     }
 

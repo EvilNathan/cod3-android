@@ -121,7 +121,7 @@ class Cod3AndroidApp final : public rex::ReXApp {
       paths.game_data_root = game_data;
     }
     // Keep saves, shader caches and config inside the app's external files
-    // directory, next to logfile.txt.
+    // directory, next to the session log.
     if (!log_file.empty()) {
       const auto user_root =
           std::filesystem::path(log_file).parent_path() / "data";
@@ -232,31 +232,28 @@ int RunAndroidApp(int argc, char** argv) {
   rex::cvar::ApplyEnvironment();
   rex::InitLoggingEarly();
 
-  // The Java launcher appends to logfile.txt; the native rotating sink opens
-  // its file with truncation, so two writers on one path corrupt both. Native
-  // lines go to native-log.txt in the same directory.
-  std::filesystem::path native_log;
+  // The Java host truncates this single absolute file at the start of every
+  // game session and appends its own lines to it. Native lines use the same
+  // file with a non-rotating sink, so no native-log.1.txt/.2.txt copies are
+  // left behind. log_file is owned by this function for the runtime's life.
   if (!log_file.empty()) {
-    native_log = std::filesystem::path(log_file).parent_path() / "native-log.txt";
     std::error_code ec;
-    std::filesystem::create_directories(native_log.parent_path(), ec);
-    // LogConfig takes a borrowed pointer; keep the string alive across init.
-    const std::string native_log_path = native_log.string();
+    std::filesystem::create_directories(std::filesystem::path(log_file).parent_path(), ec);
     try {
       rex::LogConfig log_config;
-      log_config.log_file = native_log_path.c_str();
+      log_config.log_file = log_file.c_str();
+      log_config.log_file_single = true;
       log_config.log_to_console = false;
       log_config.default_level =
           rex::ParseLogLevelOr(REXCVAR_GET(log_level), spdlog::level::info);
       log_config.flush_level = spdlog::level::info;
       rex::InitLogging(log_config);
     } catch (const std::exception& e) {
-      ALOGE("file logging unavailable (%s): %s", native_log_path.c_str(), e.what());
+      ALOGE("file logging unavailable (%s): %s", log_file.c_str(), e.what());
     }
   }
 
-  REXLOG_INFO("android_main: app={} lib_dir={} java_log={} native_log={}", kAppIdentifier,
-              lib_dir, log_file, native_log.string());
+  REXLOG_INFO("android_main: app={} lib_dir={} log={}", kAppIdentifier, lib_dir, log_file);
   REXLOG_INFO("android_main: game data dir={}", game_data);
 
   if (game_data.empty()) {

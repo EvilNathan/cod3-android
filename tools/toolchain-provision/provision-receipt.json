@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "root": "C:\\Users\\runneradmin\\Downloads\\cod3-android",
+  "components": [
+    {
+      "component": "cmake",
+      "action": "downloaded",
+      "sha256": "4d52ebab7193a698651639ed80d8d04fd903358843572cf44c7fd234cb7c26ab"
+    },
+    {
+      "component": "ninja",
+      "action": "downloaded",
+      "sha256": "07fc8261b42b20e71d1720b39068c2e14ffcee6396b76fb7a795fb460b78dc65"
+    },
+    {
+      "component": "xdvdfs",
+      "action": "downloaded",
+      "sha256": "008B1B3A63F1ECB00D1ED51AB154053FD0F7C41C68E973455BBE77AB989A7CC5"
+    },
+    {
+      "component": "msvc",
+      "action": "installed"
+    }
+  ],
+  "reused_from": "",
+  "downloaded_sha256": {
+    "cmake": "4D52EBAB7193A698651639ED80D8D04FD903358843572CF44C7FD234CB7C26AB",
+    "ninja": "07FC8261B42B20E71D1720B39068C2E14FFCEE6396B76FB7A795FB460B78DC65",
+    "xdvdfs": "008B1B3A63F1ECB00D1ED51AB154053FD0F7C41C68E973455BBE77AB989A7CC5"
+  }
+}

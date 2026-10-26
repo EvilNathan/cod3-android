@@ -130,8 +130,9 @@ lib/arm64-v8a/libc++_shared.so    NDK LLVM libc++ (shared STL)
 - Game data can be selected with the system folder picker (persisted SAF grant)
   or by placing it at `/sdcard/cod3`. The launcher hashes `default.xex` in the
   background and compares it with the supported SHA-256.
-- Java and native log lines append to one file:
-  `/sdcard/Android/data/com.project1944.cod3/files/logfile.txt`.
+- Java and native log lines share one file:
+  `/sdcard/Android/data/com.project1944.cod3/files/native-log.txt`. It is
+  truncated at the start of every game session; there are no rotated copies.
 - `GameActivity` adds a translucent touch overlay: two sticks, ABXY, LB/RB,
   LT/RT and Back/Start.
 - The app opens a `WindowSDL`, creates a Vulkan provider and presenter, attaches
@@ -220,7 +221,7 @@ android/
       MainActivity.java              Launcher, diagnostics, game-data picker
       GameActivity.java              SDLActivity host + content:// fd bridge
       GameData.java                  /sdcard/cod3 fallback + SHA-256 checks
-      Logx.java                      logfile.txt + logcat writer
+      Logx.java                      native-log.txt + logcat writer
       TouchOverlay.java              On-screen gamepad overlay
     src/main/java/org/libsdl/app/    Official SDL3 Android Java glue (zlib)
     src/main/cpp/
@@ -327,8 +328,8 @@ Expected on a working M1a device:
 - logcat lines tagged `project1944` show the SDL video driver, the selected
   Vulkan device, `Project1944App: initialized, presenting`, and
   `paint requests/s` every two seconds;
-- every Java and native line is also appended to
-  `/sdcard/Android/data/com.project1944.cod3/files/logfile.txt`;
+- every Java and native line is also written to
+  `/sdcard/Android/data/com.project1944.cod3/files/native-log.txt`;
 - no crash when backgrounding and returning.
 
 The game itself is still not loaded: the picker verifies the data and passes the
@@ -337,26 +338,31 @@ are part of M2.
 
 ## Logging
 
-One file collects everything:
+One file collects everything and is reset at the start of every game session:
 
 ```
-/sdcard/Android/data/com.project1944.cod3/files/logfile.txt
+/sdcard/Android/data/com.project1944.cod3/files/native-log.txt
 ```
 
+- `GameActivity` truncates the file before `SDL_main` starts and writes a
+  `===== SESSION ... build=... =====` header, so a new game never inherits
+  lines from a previous run.
 - Java lines come from `Logx` (launcher, picker, lifecycle, overlay presses).
-- Native lines come from the ReXGlue spdlog rotating sink; the same path is
-  passed through `GameActivity.nativeSetPaths()` before `SDL_main` starts.
+- Native lines come from the ReXGlue append sink; the same path is passed
+  through `GameActivity.nativeSetPaths()`.
+- The sink is single-file: there is no `native-log.1.txt` rotation. Old
+  `logfile.txt` and rotated files are deleted when a session starts.
 - logcat stays enabled as a second channel:
   `adb logcat -s project1944 rexglue SDL`.
 
 Pull the file after a test run:
 
 ```powershell
-adb pull /sdcard/Android/data/com.project1944.cod3/files/logfile.txt
+adb pull /sdcard/Android/data/com.project1944.cod3/files/native-log.txt
 ```
 
-Rotated files are named `logfile.1.txt`, `logfile.2.txt`, ... when the 5 MB
-limit is reached. The launcher footer shows the exact path and copies it on tap.
+The launcher footer shows the exact path and copies it on tap. A new game
+launch replaces the file instead of appending to it.
 
 ## Touch overlay
 
@@ -365,7 +371,7 @@ Back/Start over the SDL surface. It does not swallow empty-screen touches, so
 the underlying `SurfaceView` still receives them.
 
 Button presses are dispatched as synthetic `SOURCE_GAMEPAD` `KeyEvent`s through
-`SDLActivity.dispatchKeyEvent()` and recorded in `logfile.txt`. The stick
+`SDLActivity.dispatchKeyEvent()` and recorded in `native-log.txt`. The stick
 positions are visual-only for now: feeding them into the ReXGlue input driver is
 M4 work. Until then the overlay is a working UI scaffold, not a playable pad.
 
@@ -386,10 +392,10 @@ Current checklist for validating M1a hardware behaviour:
 - [ ] `paint requests/s` stabilises near 60.
 - [ ] Screen is black, not garbage or a stale buffer.
 - [ ] Home then resume: swapchain reattaches, painting continues.
-- [ ] `logfile.txt` exists, contains Java and native lines, and survives reload.
+- [ ] `native-log.txt` exists, contains Java and native lines, and is replaced on a new game launch.
 - [ ] 10-minute run: no thermal shutdown, no memory growth.
 
-Attach `logfile.txt` (or the relevant `logcat` slice) and device model/driver
+Attach `native-log.txt` (or the relevant `logcat` slice) and device model/driver
 version to any report. Do not upload game files.
 
 ## Roadmap and TODO
@@ -411,7 +417,7 @@ version to any report. Do not upload game files.
 - [x] ucontext AArch64 fibers
 - [x] Page-size-independent guest memory offset
 - [x] logcat logging backend
-- [x] Single `logfile.txt` sink for Java and native logs
+- [x] Single `native-log.txt` sink for Java and native logs, reset per game session
 - [x] Native library directory discovery without JNI
 - [x] `openContentFd` bridge on the Java side
 - [x] Launcher UI with device diagnostics
@@ -480,7 +486,7 @@ version to any report. Do not upload game files.
 - [ ] Vulkan 1.3 reported by `doctor.ps1`
 - [ ] Black swapchain, stable `paint requests/s`
 - [ ] Touch overlay visible; empty touches pass through
-- [ ] `logfile.txt` has both Java and native lines
+- [ ] `native-log.txt` has both Java and native lines
 - [ ] Background/resume survives
 - [ ] 10-minute stability run
 
@@ -520,7 +526,7 @@ version to any report. Do not upload game files.
 | Paint logs but nothing visible | The swapchain is cleared to black by design in M1a |
 | Picker path is null | Folder is not reachable as an absolute path; copy it to `/sdcard/cod3` |
 | `default.xex not found` | Grant All-files access; confirm the path shown in the game-data card |
-| No `logfile.txt` | External files dir unavailable; check `/sdcard/Android/data/com.project1944.cod3/files/` |
+| No `native-log.txt` | External files dir unavailable; check `/sdcard/Android/data/com.project1944.cod3/files/` |
 | Build fails in `rex_version.cmake` | Patch not applied, or `SOURCE_DIR` fix missing |
 | `librexruntime.so` missing from APK | Check the CMake output directory; Gradle must own `obj/arm64-v8a` |
 | Gradle cannot find CMake 3.30.5 | Install it from SDK Manager or point `cmake.dir` at the SDK copy |
