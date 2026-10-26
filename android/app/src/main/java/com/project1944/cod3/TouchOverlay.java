@@ -1,15 +1,11 @@
 package com.project1944.cod3;
 
-import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.RectF;
 import android.graphics.Typeface;
-import android.os.SystemClock;
 import android.util.SparseArray;
-import android.view.InputDevice;
-import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
 
@@ -20,24 +16,37 @@ import java.util.List;
  * Transparent gamepad overlay for the SDL surface.
  *
  * Layout: two sticks, a four-button diamond, two shoulder pairs and
- * Back/Start. Presses are forwarded as synthetic gamepad KeyEvents through
- * SDLActivity.dispatchKeyEvent(), so the overlay works with SDL's existing
- * controller path once a virtual pad is registered. Stick movement is drawn
- * and logged; wiring it into the ReXGlue input driver is part of M4.
+ * Back/Start. Everything is driven through one SDL virtual joystick in native
+ * code (touch_pad.cpp); ReXGlue's SDL input driver turns it into XInput state.
  *
  * Touches that do not start on a control return false so they still reach the
  * SDL SurfaceView underneath.
  */
 final class TouchOverlay extends View {
+    // SDL_GAMEPAD_BUTTON_* indices; -1 means "use sdAxis instead".
+    private static final int BTN_A = 0;
+    private static final int BTN_B = 1;
+    private static final int BTN_X = 2;
+    private static final int BTN_Y = 3;
+    private static final int BTN_BACK = 4;
+    private static final int BTN_START = 6;
+    private static final int BTN_L1 = 9;
+    private static final int BTN_R1 = 10;
+    // SDL axis indices of the virtual pad (touch_pad.cpp): 0..3 sticks, 4/5 triggers.
+    private static final int AXIS_LT = 4;
+    private static final int AXIS_RT = 5;
+
     private static final class PadButton {
-        final int keyCode;
+        final int sdButton;   // SDL_GAMEPAD_BUTTON index, or -1
+        final int sdAxis;     // axis index when sdButton == -1, else -1
         final String label;
         final boolean round;
         final RectF bounds = new RectF();
         boolean down;
 
-        PadButton(int keyCode, String label, boolean round) {
-            this.keyCode = keyCode;
+        PadButton(int sdButton, int sdAxis, String label, boolean round) {
+            this.sdButton = sdButton;
+            this.sdAxis = sdAxis;
             this.label = label;
             this.round = round;
         }
@@ -46,7 +55,6 @@ final class TouchOverlay extends View {
     private static final int ACCENT = Color.rgb(232, 180, 74);
     private static final int WHITE = Color.rgb(236, 240, 244);
 
-    private final GameActivity activity;
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint textPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final List<PadButton> buttons = new ArrayList<>();
@@ -61,7 +69,6 @@ final class TouchOverlay extends View {
 
     TouchOverlay(GameActivity activity) {
         super(activity);
-        this.activity = activity;
         setFocusable(false);
         setClickable(false);
         setWillNotDraw(false);
@@ -94,22 +101,22 @@ final class TouchOverlay extends View {
         float triggerW = u * 0.145f;
         float triggerH = u * 0.072f;
         float edge = dp(18);
-        addPill(new PadButton(KeyEvent.KEYCODE_BUTTON_L2, "LT", false),
+        addPill(new PadButton(-1, AXIS_LT, "LT", false),
                 edge, edge, triggerW, triggerH);
-        addPill(new PadButton(KeyEvent.KEYCODE_BUTTON_L1, "LB", false),
+        addPill(new PadButton(BTN_L1, -1, "LB", false),
                 edge, edge + triggerH + dp(8), triggerW, triggerH);
-        addPill(new PadButton(KeyEvent.KEYCODE_BUTTON_R2, "RT", false),
+        addPill(new PadButton(-1, AXIS_RT, "RT", false),
                 w - edge - triggerW, edge, triggerW, triggerH);
-        addPill(new PadButton(KeyEvent.KEYCODE_BUTTON_R1, "RB", false),
+        addPill(new PadButton(BTN_R1, -1, "RB", false),
                 w - edge - triggerW, edge + triggerH + dp(8), triggerW, triggerH);
 
         // Back / Start pills at the top centre.
         float metaW = u * 0.125f;
         float metaH = u * 0.060f;
         float metaY = edge;
-        addPill(new PadButton(KeyEvent.KEYCODE_BUTTON_SELECT, "BACK", false),
+        addPill(new PadButton(BTN_BACK, -1, "BACK", false),
                 w * 0.5f - metaW - dp(7), metaY, metaW, metaH);
-        addPill(new PadButton(KeyEvent.KEYCODE_BUTTON_START, "START", false),
+        addPill(new PadButton(BTN_START, -1, "START", false),
                 w * 0.5f + dp(7), metaY, metaW, metaH);
 
         // Face buttons: Xbox diamond (Y top, X left, B bottom, A right).
@@ -117,10 +124,10 @@ final class TouchOverlay extends View {
         float faceCx = w - u * 0.195f;
         float faceCy = h * 0.345f;
         float gap = u * 0.112f;
-        addRound(new PadButton(KeyEvent.KEYCODE_BUTTON_Y, "Y", true), faceCx, faceCy - gap, faceR);
-        addRound(new PadButton(KeyEvent.KEYCODE_BUTTON_X, "X", true), faceCx - gap, faceCy, faceR);
-        addRound(new PadButton(KeyEvent.KEYCODE_BUTTON_B, "B", true), faceCx, faceCy + gap, faceR);
-        addRound(new PadButton(KeyEvent.KEYCODE_BUTTON_A, "A", true), faceCx + gap, faceCy, faceR);
+        addRound(new PadButton(BTN_Y, -1, "Y", true), faceCx, faceCy - gap, faceR);
+        addRound(new PadButton(BTN_X, -1, "X", true), faceCx - gap, faceCy, faceR);
+        addRound(new PadButton(BTN_B, -1, "B", true), faceCx, faceCy + gap, faceR);
+        addRound(new PadButton(BTN_A, -1, "A", true), faceCx + gap, faceCy, faceR);
     }
 
     private void addPill(PadButton button, float left, float top, float width, float height) {
@@ -220,14 +227,22 @@ final class TouchOverlay extends View {
 
     private void pressButton(PadButton button) {
         button.down = true;
-        sendKey(button.keyCode, true);
+        if (button.sdAxis >= 0) {
+            GameActivity.nativePadAxis(button.sdAxis, 1f);
+        } else {
+            GameActivity.nativePadButton(button.sdButton, true);
+        }
         Logx.d("TouchOverlay", "pad down " + button.label);
     }
 
     private void releaseButton(PadButton button) {
         if (button != null && button.down) {
             button.down = false;
-            sendKey(button.keyCode, false);
+            if (button.sdAxis >= 0) {
+                GameActivity.nativePadAxis(button.sdAxis, 0f);
+            } else {
+                GameActivity.nativePadButton(button.sdButton, false);
+            }
             Logx.d("TouchOverlay", "pad up " + button.label);
         }
     }
@@ -242,11 +257,15 @@ final class TouchOverlay extends View {
             leftPointer = -1;
             lx = 0;
             ly = 0;
+            GameActivity.nativePadAxis(0, 0f);
+            GameActivity.nativePadAxis(1, 0f);
         }
         if (pointerId == rightPointer) {
             rightPointer = -1;
             rx = 0;
             ry = 0;
+            GameActivity.nativePadAxis(2, 0f);
+            GameActivity.nativePadAxis(3, 0f);
         }
     }
 
@@ -254,6 +273,10 @@ final class TouchOverlay extends View {
         leftPointer = -1;
         rightPointer = -1;
         lx = ly = rx = ry = 0;
+        GameActivity.nativePadAxis(0, 0f);
+        GameActivity.nativePadAxis(1, 0f);
+        GameActivity.nativePadAxis(2, 0f);
+        GameActivity.nativePadAxis(3, 0f);
     }
 
     private void updateStick(float x, float y, boolean left) {
@@ -269,18 +292,14 @@ final class TouchOverlay extends View {
         if (left) {
             lx = nx;
             ly = ny;
+            GameActivity.nativePadAxis(0, lx);
+            GameActivity.nativePadAxis(1, ly);
         } else {
             rx = nx;
             ry = ny;
+            GameActivity.nativePadAxis(2, rx);
+            GameActivity.nativePadAxis(3, ry);
         }
-    }
-
-    private void sendKey(int keyCode, boolean down) {
-        long now = SystemClock.uptimeMillis();
-        KeyEvent event = new KeyEvent(now, now,
-                down ? KeyEvent.ACTION_DOWN : KeyEvent.ACTION_UP,
-                keyCode, 0, 0, 0, 0, 0, InputDevice.SOURCE_GAMEPAD);
-        activity.dispatchKeyEvent(event);
     }
 
     // ---------------------------------------------------------------- draw

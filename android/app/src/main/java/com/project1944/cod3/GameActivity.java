@@ -48,6 +48,9 @@ public final class GameActivity extends SDLActivity {
         addContentView(overlay, new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         Logx.i("GameActivity", "touch overlay attached");
+        // The SDL virtual pad behind the overlay is attached by native code
+        // (touch_pad.cpp) once the SDL window is up; overlay calls into
+        // nativePadAxis/nativePadButton are ignored until then.
     }
 
     @Override
@@ -84,6 +87,14 @@ public final class GameActivity extends SDLActivity {
     }
 
     private static native void nativeSetPaths(String logFile, String gamePath);
+
+    /**
+     * Virtual gamepad bridge (touch_pad.cpp). The touch overlay drives one
+     * SDL virtual joystick; these setters feed its axes and buttons. The pad
+     * itself is attached from native code once the SDL window exists.
+     */
+    public static native void nativePadAxis(int axis, float value);
+    public static native void nativePadButton(int button, boolean down);
 
     /**
      * Resolves a content:// URI for the native filesystem bridge. Called via

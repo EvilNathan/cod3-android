@@ -31,6 +31,7 @@
 #include <rex/ui/windowed_app_context_sdl.h>
 
 #include "cod3_pc_init.h"
+#include "touch_pad.h"
 
 #if REX_PLATFORM_ANDROID
 
@@ -204,6 +205,12 @@ int RunAndroidApp(int argc, char** argv) {
       return EXIT_FAILURE;
     }
 
+    // The window exists now, but the input driver's SDL event watch is
+    // installed during OnInitialize (RexApp::Setup -> InputSystem::AttachWindow
+    // -> SDLInputDriver::OnWindowAvailable), so the virtual pad must be
+    // attached after OnInitialize succeeds: its GAMEPAD_ADDED event would
+    // otherwise be emitted before anyone is listening. The Java touch overlay
+    // feeds the pad through nativePadAxis/nativePadButton.
     const auto creator = rex::ui::WindowedApp::GetCreator(kAppIdentifier);
     if (!creator) {
       REXLOG_ERROR("android_main: app '{}' is not registered", kAppIdentifier);
@@ -211,7 +218,14 @@ int RunAndroidApp(int argc, char** argv) {
     }
 
     std::unique_ptr<rex::ui::WindowedApp> app = creator(app_context);
-    result = app->OnInitialize() ? app_context.RunMainMessageLoop() : EXIT_FAILURE;
+    if (!app->OnInitialize()) {
+      REXLOG_ERROR("android_main: OnInitialize failed");
+      return EXIT_FAILURE;
+    }
+
+    project1944::InitVirtualPad();
+
+    result = app_context.RunMainMessageLoop();
     app->InvokeOnDestroy();
   }
 

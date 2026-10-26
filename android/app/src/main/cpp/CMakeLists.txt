@@ -76,6 +76,7 @@ endfunction()
 
 add_library(main SHARED
     src/main.cpp
+    src/touch_pad.cpp
     src/module_registry.cpp
     "${REXSDK_DIR}/src/ui/rex_app.cpp"
 )
